@@ -173,12 +173,14 @@ impl RuntimeProvider for LocalRuntime {
             let executor_side =
                 ExecutorSide::new(Arc::clone(&self.registry), strategies, deserializers);
 
+            let publisher: Arc<dyn crate::transport::TaskPublisher> = Arc::new(publisher);
             let monitor_side =
-                MonitorSide::new(Arc::clone(&self.registry), Arc::new(publisher), serializers);
+                MonitorSide::new(Arc::clone(&self.registry), publisher, serializers);
 
             let exec_cancel = cancel.clone();
             let exec_task = tokio::spawn(async move {
-                let _ = executor_side.run(&mut subscriber, exec_cancel).await;
+                let subscriber: &mut dyn crate::transport::TaskSubscriber = &mut subscriber;
+                let _ = executor_side.run(subscriber, exec_cancel).await;
             });
 
             monitor_side.run(&ast, cancel).await?;
