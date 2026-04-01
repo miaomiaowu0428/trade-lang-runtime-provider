@@ -76,8 +76,8 @@ impl ExecutorRuntimeBuilder {
         for (name, handler) in other.data_items {
             self.registry.data_items.insert(name, handler);
         }
-        for (name, handler) in other.branched_calls {
-            self.registry.branched_calls.insert(name, handler);
+        for (name, handler) in other.control_flows {
+            self.registry.control_flows.insert(name, handler);
         }
         for (name, handler) in other.all_calls {
             self.registry.all_calls.insert(name, handler);

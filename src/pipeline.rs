@@ -164,8 +164,8 @@ impl TradePipeline {
                         false
                     }
                 }
-                Statement::BranchedCall { name, branches } => {
-                    self.exec_branched_call(name, branches).await
+                Statement::ControlFlow { name, branches } => {
+                    self.exec_control_flow(name, branches).await
                 }
                 Statement::AllCall {
                     name,
@@ -176,14 +176,14 @@ impl TradePipeline {
         })
     }
 
-    // ── BranchedCall ──────────────────────────────────────────────────────────
+    // ── ControlFlow ─────────────────────────────────────────────────────────────────────────────
 
-    async fn exec_branched_call(
+    async fn exec_control_flow(
         &self,
         name: &str,
         branches: &[(Condition, Vec<ExecutorItem>)],
     ) -> bool {
-        if let Some(handler) = self.runtime.branched_calls.get(name) {
+        if let Some(handler) = self.runtime.control_flows.get(name) {
             handler.execute(branches, Arc::new(self.clone())).await
         } else {
             // 未注册的名称：顺序匹配第一个满足条件的分支

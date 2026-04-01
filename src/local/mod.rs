@@ -90,8 +90,8 @@ impl LocalRuntimeBuilder {
         for (name, handler) in other.monitors {
             self.registry.monitors.insert(name, handler);
         }
-        for (name, handler) in other.branched_calls {
-            self.registry.branched_calls.insert(name, handler);
+        for (name, handler) in other.control_flows {
+            self.registry.control_flows.insert(name, handler);
         }
         for (name, handler) in other.all_calls {
             self.registry.all_calls.insert(name, handler);
@@ -174,8 +174,7 @@ impl RuntimeProvider for LocalRuntime {
                 ExecutorSide::new(Arc::clone(&self.registry), strategies, deserializers);
 
             let publisher: Arc<dyn crate::transport::TaskPublisher> = Arc::new(publisher);
-            let monitor_side =
-                MonitorSide::new(Arc::clone(&self.registry), publisher, serializers);
+            let monitor_side = MonitorSide::new(Arc::clone(&self.registry), publisher, serializers);
 
             let exec_cancel = cancel.clone();
             let exec_task = tokio::spawn(async move {

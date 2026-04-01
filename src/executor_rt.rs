@@ -238,7 +238,7 @@ impl ExecutorRuntime {
             executors: self.registry.executors.clone(),
             conditions: self.registry.conditions.clone(),
             monitors: self.registry.monitors.clone(),
-            branched_calls: self.registry.branched_calls.clone(),
+            control_flows: self.registry.control_flows.clone(),
             all_calls: self.registry.all_calls.clone(),
         });
 

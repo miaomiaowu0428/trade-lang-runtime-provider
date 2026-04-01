@@ -29,7 +29,7 @@ use tokio_util::sync::CancellationToken;
 // ── Re-export core ────────────────────────────────────────────────────────────
 pub use trade_lang_core;
 pub use trade_lang_core::{
-    AllCallHandler, BranchedCallHandler, CancellationToken as _CT, ConditionHandler,
+    AllCallHandler, ControlFlowHandler, CancellationToken as _CT, ConditionHandler,
     DataItemHandler, ExecutorHandler, MonitorHandler, MonitorMessage, PipelineOps, RuntimeRegistry,
     TradeTaskContext, monitor_mpsc,
 };

@@ -18,8 +18,8 @@ use log::info;
 use trade_lang_core::{
     AllCallHandler, BranchedCallHandler, PipelineOps, RuntimeRegistry, TradeTaskContext,
 };
-use trade_meta_compiler::ast::{Condition, ExecutorItem};
 use trade_meta_compiler::RuntimeValue;
+use trade_meta_compiler::ast::{Condition, ExecutorItem};
 
 // ── Spawn ─────────────────────────────────────────────────────────────────────
 
@@ -184,8 +184,8 @@ pub fn register_builtins(registry: &mut RuntimeRegistry) {
         .insert("Done".to_string(), Arc::new(BuiltinNoopExecutor));
 
     // 控制流 handler
-    registry.register_branched_call("Spawn", Arc::new(SpawnHandler));
-    registry.register_branched_call("OneOf", Arc::new(OneOfHandler));
+    registry.register_control_flow("Spawn", Arc::new(SpawnHandler));
+    registry.register_control_flow("OneOf", Arc::new(OneOfHandler));
     registry.register_all_call("All", Arc::new(AllHandler));
 
     // Timeout condition
