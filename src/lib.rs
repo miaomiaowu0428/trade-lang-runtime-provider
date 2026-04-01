@@ -57,7 +57,7 @@ pub mod builtins;
 
 pub use builtins::register_builtins;
 pub use conditions::TimeoutCondition;
-pub use control_flows::{AllHandler, OneOfHandler, SpawnHandler};
+pub use control_flows::OneOfHandler;
 pub use decision::{DecisionRuntime, DecisionRuntimeBuilder};
 pub use executor::{ExecutorRuntime, ExecutorRuntimeBuilder};
 pub use executor_side::ExecutorSide;

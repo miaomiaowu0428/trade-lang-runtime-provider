@@ -167,6 +167,14 @@ impl TradePipeline {
                 Statement::ControlFlow { name, branches } => {
                     self.exec_control_flow(name, branches).await
                 }
+                Statement::Spawn { items } => {
+                    let items = items.clone();
+                    let child = self.clone();
+                    tokio::spawn(async move {
+                        child.exec_executor_items(&items).await;
+                    });
+                    false
+                }
             }
         })
     }
@@ -296,6 +304,17 @@ impl TradePipeline {
                     } else {
                         false
                     }
+                }
+                Condition::All { conditions } => {
+                    let futs: Vec<_> = conditions
+                        .iter()
+                        .map(|c| {
+                            let p = self.clone();
+                            let c = c.clone();
+                            async move { p.eval_condition(&c).await }
+                        })
+                        .collect();
+                    futures::future::join_all(futs).await.iter().all(|&r| r)
                 }
             }
         })
