@@ -57,7 +57,7 @@ impl ControlFlowHandler for SpawnHandler {
 pub struct OneOfHandler;
 
 #[async_trait]
-impl BranchedCallHandler for OneOfHandler {
+impl ControlFlowHandler for OneOfHandler {
     async fn execute(
         &self,
         branches: &[(Condition, Vec<ExecutorItem>)],
