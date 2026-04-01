@@ -29,8 +29,8 @@ use tokio_util::sync::CancellationToken;
 // ── Re-export core ────────────────────────────────────────────────────────────
 pub use trade_lang_core;
 pub use trade_lang_core::{
-    ControlFlowHandler, CancellationToken as _CT, ConditionHandler,
-    DataItemHandler, ExecutorHandler, MonitorHandler, MonitorMessage, PipelineOps, RuntimeRegistry,
+    CancellationToken as _CT, ConditionHandler,
+    DataItemHandler, ExecutorHandler, MonitorHandler, MonitorMessage, RuntimeRegistry,
     TradeTaskContext, monitor_mpsc,
 };
 
@@ -38,8 +38,6 @@ pub use trade_lang_core::{
 
 pub mod pipeline;
 pub mod transport;
-
-pub mod control_flows;
 
 pub mod executor_side;
 pub mod monitor_side;
@@ -55,7 +53,6 @@ pub mod builtins;
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
 pub use builtins::register_builtins;
-pub use control_flows::OneOfHandler;
 pub use decision::{DecisionRuntime, DecisionRuntimeBuilder};
 pub use executor::{ExecutorRuntime, ExecutorRuntimeBuilder};
 pub use executor_side::ExecutorSide;

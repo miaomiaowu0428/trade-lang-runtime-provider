@@ -18,7 +18,7 @@ use log::{info, warn};
 use trade_meta_compiler::RuntimeValue;
 use trade_meta_compiler::ast::*;
 
-use trade_lang_core::{PipelineOps, RuntimeRegistry, TradeTaskContext};
+use trade_lang_core::{RuntimeRegistry, TradeTaskContext};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TradePipeline — 每次触发后的交易执行流程
@@ -164,9 +164,6 @@ impl TradePipeline {
                         false
                     }
                 }
-                Statement::ControlFlow { name, branches } => {
-                    self.exec_control_flow(name, branches).await
-                }
                 Statement::Spawn { items } => {
                     let items = items.clone();
                     let child = self.clone();
@@ -177,26 +174,6 @@ impl TradePipeline {
                 }
             }
         })
-    }
-
-    // ── ControlFlow ─────────────────────────────────────────────────────────────────────────────
-
-    async fn exec_control_flow(
-        &self,
-        name: &str,
-        branches: &[(Condition, Vec<ExecutorItem>)],
-    ) -> bool {
-        if let Some(handler) = self.runtime.control_flows.get(name) {
-            handler.execute(branches, Arc::new(self.clone())).await
-        } else {
-            // 未注册的名称：顺序匹配第一个满足条件的分支
-            for (cond, execs) in branches {
-                if self.eval_condition(cond).await {
-                    return self.exec_executor_items(execs).await;
-                }
-            }
-            false
-        }
     }
 
     // ── ExecutorItem 序列 ─────────────────────────────────────────────────────
@@ -210,6 +187,10 @@ impl TradePipeline {
                 ExecutorItem::LetAssign { var_name, value } => {
                     let v = self.eval_expr(value).await;
                     self.ctx.set_var(var_name, v).await;
+                }
+                ExecutorItem::LetDestructure { targets, value } => {
+                    let rv = self.eval_expr(value).await;
+                    self.destructure(targets, rv).await;
                 }
                 ExecutorItem::Executor(ec) => {
                     let name = ec.executor.name.as_str();
@@ -305,16 +286,46 @@ impl TradePipeline {
                         false
                     }
                 }
-                Condition::All { conditions } => {
-                    let futs: Vec<_> = conditions
-                        .iter()
-                        .map(|c| {
-                            let p = self.clone();
-                            let c = c.clone();
-                            async move { p.eval_condition(&c).await }
-                        })
-                        .collect();
-                    futures::future::join_all(futs).await.iter().all(|&r| r)
+                Condition::Combinator { name, conditions } => {
+                    match name.as_str() {
+                        "All" => {
+                            let futs: Vec<_> = conditions
+                                .iter()
+                                .map(|c| {
+                                    let p = self.clone();
+                                    let c = c.clone();
+                                    async move { p.eval_condition(&c).await }
+                                })
+                                .collect();
+                            futures::future::join_all(futs).await.iter().all(|&r| r)
+                        }
+                        "OneOf" => {
+                            use futures::stream::{FuturesUnordered, StreamExt};
+                            let mut futs: FuturesUnordered<_> = conditions
+                                .iter()
+                                .map(|c| {
+                                    let p = self.clone();
+                                    let c = c.clone();
+                                    async move { p.eval_condition(&c).await }
+                                })
+                                .collect();
+                            while let Some(ok) = futs.next().await {
+                                if ok {
+                                    return true;
+                                }
+                            }
+                            false
+                        }
+                        other => {
+                            warn!("[Pipeline] unknown combinator: {}", other);
+                            false
+                        }
+                    }
+                }
+                Condition::Seq { items } => {
+                    // 顺序跑完执行器序列→ true；期间 Done 信号到达→ false
+                    let done_triggered = self.exec_executor_items(items).await;
+                    !done_triggered
                 }
             }
         })
@@ -400,32 +411,6 @@ impl TradePipeline {
     }
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// PipelineOps — 供 ControlFlowHandler 回调 pipeline 能力
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-#[async_trait]
-impl PipelineOps for TradePipeline {
-    async fn eval_condition(&self, cond: &Condition) -> bool {
-        TradePipeline::eval_condition(self, cond).await
-    }
-
-    async fn exec_executor_items(&self, items: &[ExecutorItem]) -> bool {
-        TradePipeline::exec_executor_items(self, items).await
-    }
-
-    fn is_done(&self) -> bool {
-        self.ctx.is_done()
-    }
-
-    fn signal_done(&self) {
-        self.ctx.signal_done();
-    }
-
-    fn clone_ops(&self) -> Arc<dyn PipelineOps> {
-        Arc::new(self.clone())
-    }
-}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 辅助函数（pub(crate) 供 runner/decision/executor 模块使用）

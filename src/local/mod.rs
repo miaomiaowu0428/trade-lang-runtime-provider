@@ -90,9 +90,6 @@ impl LocalRuntimeBuilder {
         for (name, handler) in other.monitors {
             self.registry.monitors.insert(name, handler);
         }
-        for (name, handler) in other.control_flows {
-            self.registry.control_flows.insert(name, handler);
-        }
         self
     }
 

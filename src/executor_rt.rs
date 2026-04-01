@@ -238,7 +238,6 @@ impl ExecutorRuntime {
             executors: self.registry.executors.clone(),
             conditions: self.registry.conditions.clone(),
             monitors: self.registry.monitors.clone(),
-            control_flows: self.registry.control_flows.clone(),
         });
 
         let pipeline = TradePipeline::new(runtime, ctx);

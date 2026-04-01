@@ -76,9 +76,6 @@ impl ExecutorRuntimeBuilder {
         for (name, handler) in other.data_items {
             self.registry.data_items.insert(name, handler);
         }
-        for (name, handler) in other.control_flows {
-            self.registry.control_flows.insert(name, handler);
-        }
         self
     }
 
