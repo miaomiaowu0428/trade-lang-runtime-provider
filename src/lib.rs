@@ -40,7 +40,6 @@ pub mod pipeline;
 pub mod transport;
 
 pub mod control_flows;
-pub mod conditions;
 
 pub mod executor_side;
 pub mod monitor_side;
@@ -56,7 +55,6 @@ pub mod builtins;
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
 pub use builtins::register_builtins;
-pub use conditions::TimeoutCondition;
 pub use control_flows::OneOfHandler;
 pub use decision::{DecisionRuntime, DecisionRuntimeBuilder};
 pub use executor::{ExecutorRuntime, ExecutorRuntimeBuilder};
