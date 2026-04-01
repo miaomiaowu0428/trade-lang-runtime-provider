@@ -16,7 +16,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use log::info;
 
 use trade_lang_core::{
-    AllCallHandler, BranchedCallHandler, PipelineOps, RuntimeRegistry, TradeTaskContext,
+    AllCallHandler, ControlFlowHandler, PipelineOps, RuntimeRegistry, TradeTaskContext
 };
 use trade_meta_compiler::RuntimeValue;
 use trade_meta_compiler::ast::{Condition, ExecutorItem};
@@ -27,7 +27,7 @@ use trade_meta_compiler::ast::{Condition, ExecutorItem};
 pub struct SpawnHandler;
 
 #[async_trait]
-impl BranchedCallHandler for SpawnHandler {
+impl ControlFlowHandler for SpawnHandler {
     async fn execute(
         &self,
         branches: &[(Condition, Vec<ExecutorItem>)],
