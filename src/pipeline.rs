@@ -41,9 +41,17 @@ impl TradePipeline {
     /// 执行完整的交易流程
     pub async fn run(&self, task_id: u64, trigger: &TriggerBody) {
         info!("  [Task#{}] ─── buy ───", task_id);
-        let buy_ok = self.exec_buy(&trigger.buy).await;
+        for stmt in &trigger.buy {
+            if self.ctx.is_done() {
+                info!("  [Task#{}] Done signal, exiting buy", task_id);
+                break;
+            }
+            if self.exec_statement(stmt).await {
+                break;
+            }
+        }
 
-        if buy_ok {
+        if !self.ctx.is_done() {
             info!("  [Task#{}] ─── sell ───", task_id);
             for stmt in &trigger.sell {
                 if self.ctx.is_done() {
@@ -54,8 +62,6 @@ impl TradePipeline {
                     break;
                 }
             }
-        } else {
-            warn!("  [Task#{}] buy failed, skipping sell", task_id);
         }
 
         if !trigger.sell_finally.is_empty() {
@@ -65,71 +71,6 @@ impl TradePipeline {
 
         info!("  [Task#{}] Trade pipeline finished", task_id);
         self.ctx.signal_done();
-    }
-
-    // ── Buy spec ──────────────────────────────────────────────────────────────
-
-    async fn exec_buy(&self, buy: &BuySpec) -> bool {
-        match buy {
-            BuySpec::Direct(call) => match self.exec_call(call).await {
-                Some(v) => {
-                    info!("    buy result: {:?}", v);
-                    true
-                }
-                None => false,
-            },
-            BuySpec::Destructure { targets, value } => match value {
-                DataExpr::Call(call) => match self.exec_call(call).await {
-                    Some(rv) => {
-                        self.destructure(targets, rv).await;
-                        true
-                    }
-                    None => false,
-                },
-                _ => {
-                    let rv = self.eval_expr(value).await;
-                    self.destructure(targets, rv).await;
-                    true
-                }
-            },
-            BuySpec::List(items) => {
-                let mut any_ok = false;
-                for item in items {
-                    match item {
-                        BuyItem::Direct(call) => match self.exec_call(call).await {
-                            Some(v) => {
-                                info!("    buy item result: {:?}", v);
-                                any_ok = true;
-                            }
-                            None => {
-                                warn!("    buy item '{}' failed", call.name.name);
-                            }
-                        },
-                        BuyItem::Destructure { targets, value } => match value {
-                            DataExpr::Call(call) => match self.exec_call(call).await {
-                                Some(rv) => {
-                                    self.destructure(targets, rv).await;
-                                    any_ok = true;
-                                }
-                                None => {
-                                    warn!(
-                                        "    buy item '{}' failed, vars set to uninit",
-                                        call.name.name
-                                    );
-                                    self.destructure_uninit(targets).await;
-                                }
-                            },
-                            _ => {
-                                let rv = self.eval_expr(value).await;
-                                self.destructure(targets, rv).await;
-                                any_ok = true;
-                            }
-                        },
-                    }
-                }
-                any_ok
-            }
-        }
     }
 
     // ── Statement execution ───────────────────────────────────────────────────
