@@ -39,6 +39,9 @@ pub use trade_lang_core::{
 pub mod pipeline;
 pub mod transport;
 
+pub mod control_flows;
+pub mod conditions;
+
 pub mod executor_side;
 pub mod monitor_side;
 
@@ -52,7 +55,9 @@ pub mod builtins;
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
-pub use builtins::{AllHandler, OneOfHandler, SpawnHandler, register_builtins};
+pub use builtins::register_builtins;
+pub use conditions::TimeoutCondition;
+pub use control_flows::{AllHandler, OneOfHandler, SpawnHandler};
 pub use decision::{DecisionRuntime, DecisionRuntimeBuilder};
 pub use executor::{ExecutorRuntime, ExecutorRuntimeBuilder};
 pub use executor_side::ExecutorSide;
