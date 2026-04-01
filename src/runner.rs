@@ -52,7 +52,6 @@ impl StrategyRunner {
                 conditions: runtime.conditions.clone(),
                 monitors: runtime.monitors.clone(),
                 control_flows: runtime.control_flows.clone(),
-                all_calls: runtime.all_calls.clone(),
             }),
             cancel,
         }

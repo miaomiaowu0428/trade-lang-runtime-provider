@@ -48,5 +48,5 @@ pub fn register_builtins(registry: &mut RuntimeRegistry) {
 
     registry.register_control_flow("Spawn", Arc::new(SpawnHandler));
     registry.register_control_flow("OneOf", Arc::new(OneOfHandler));
-    registry.register_all_call("All", Arc::new(AllHandler));
+    registry.register_control_flow("All", Arc::new(AllHandler));
 }

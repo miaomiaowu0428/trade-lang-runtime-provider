@@ -167,11 +167,6 @@ impl TradePipeline {
                 Statement::ControlFlow { name, branches } => {
                     self.exec_control_flow(name, branches).await
                 }
-                Statement::AllCall {
-                    name,
-                    conditions,
-                    executors,
-                } => self.exec_all_call(name, conditions, executors).await,
             }
         })
     }
@@ -193,38 +188,6 @@ impl TradePipeline {
                 }
             }
             false
-        }
-    }
-
-    // ── AllCall ───────────────────────────────────────────────────────────────
-
-    async fn exec_all_call(
-        &self,
-        name: &str,
-        conditions: &[Condition],
-        executors: &[ExecutorItem],
-    ) -> bool {
-        if let Some(handler) = self.runtime.all_calls.get(name) {
-            handler
-                .execute(conditions, executors, Arc::new(self.clone()))
-                .await
-        } else {
-            // 未注册的名称：join_all 并发评估，全部满足后执行
-            let futs: Vec<_> = conditions
-                .iter()
-                .map(|cond| {
-                    let p = self.clone();
-                    let cond = cond.clone();
-                    async move { p.eval_condition(&cond).await }
-                })
-                .collect();
-
-            let results = futures::future::join_all(futs).await;
-            if results.iter().all(|&r| r) {
-                self.exec_executor_items(executors).await
-            } else {
-                false
-            }
         }
     }
 
@@ -419,7 +382,7 @@ impl TradePipeline {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// PipelineOps — 供 BranchedCallHandler / AllCallHandler 回调 pipeline 能力
+// PipelineOps — 供 ControlFlowHandler 回调 pipeline 能力
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #[async_trait]

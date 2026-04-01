@@ -93,9 +93,6 @@ impl LocalRuntimeBuilder {
         for (name, handler) in other.control_flows {
             self.registry.control_flows.insert(name, handler);
         }
-        for (name, handler) in other.all_calls {
-            self.registry.all_calls.insert(name, handler);
-        }
         self
     }
 
