@@ -133,7 +133,13 @@ impl TaskPublisher for QuicPublisher {
                 .join(", "),
             receivers,
         );
-        let data = encode_envelope(envelope)?;
+        // 打入发布时间戳（纳秒）
+        let mut envelope = envelope.clone();
+        envelope.sent_at_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        let data = encode_envelope(&envelope)?;;
         let _ = self.broadcast_tx.send(data);
         Ok(())
     }
@@ -169,9 +175,14 @@ impl TaskSubscriber for QuicSubscriber {
         // 接收一个 uni stream，读取 length-prefix envelope
         let mut stream = self.conn.accept_uni().await.ok()?;
         let envelope = decode_envelope(&mut stream).await?;
+        let recv_at_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        let dispatch_us = recv_at_ns.saturating_sub(envelope.sent_at_ns) / 1_000;
         info!(
-            "[Router:QUIC] ◀ Task #{} strategy={:?} received from QUIC stream",
-            envelope.task_id, envelope.strategy_name,
+            "[Router:QUIC] ◀ Task #{} strategy={:?} received from QUIC stream dispatch={}µs",
+            envelope.task_id, envelope.strategy_name, dispatch_us,
         );
         Some(envelope)
     }

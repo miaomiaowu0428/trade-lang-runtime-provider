@@ -28,6 +28,8 @@ pub struct TaskEnvelope {
     pub strategy_name: String,
     /// Monitor 产出的上下文数据，key = protocol name, value = 序列化后的 bytes
     pub contexts: HashMap<String, Vec<u8>>,
+    /// 发布时的 Unix 纳秒时间戳（用于计算分发耗时）
+    pub sent_at_ns: u64,
 }
 
 // ── TaskResult ────────────────────────────────────────────────────────────────

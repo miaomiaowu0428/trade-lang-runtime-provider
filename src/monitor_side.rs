@@ -99,6 +99,7 @@ impl MonitorSide {
                                 task_id,
                                 strategy_name: strategy_name.clone(),
                                 contexts,
+                                sent_at_ns: 0, // 由 publisher.publish() 写入实际时间戳
                             };
 
                             if let Err(e) = self.publisher.publish(&envelope).await {
