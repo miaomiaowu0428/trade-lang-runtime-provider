@@ -62,6 +62,46 @@ pub use transport::{
     ContextDeserializer, ContextSerializer, TaskEnvelope, TaskPublisher, TaskResult, TaskSubscriber,
 };
 
+// bincode re-export for use inside register_context! macro
+#[doc(hidden)]
+pub use bincode as _bincode;
+
+/// 一键注册 context 类型的正反序列化器。
+///
+/// # 用法
+/// ```ignore
+/// let mut ser = HashMap::new();
+/// let mut de  = HashMap::new();
+/// trade_lang_runtime_provider::register_context!(ser, de, "my_protocol", MyCtxType);
+/// ```
+///
+/// 要求 `MyCtxType` 实现 `serde::Serialize + serde::DeserializeOwned`（bincode 1.x 兼容）。
+#[macro_export]
+macro_rules! register_context {
+    ($ser_map:expr, $de_map:expr, $key:literal, $ty:ty) => {
+        $ser_map.insert(
+            $key.to_string(),
+            ::std::sync::Arc::new(
+                |value: &::std::sync::Arc<dyn ::std::any::Any + Send + Sync>| {
+                    value
+                        .downcast_ref::<$ty>()
+                        .and_then(|v| $crate::_bincode::serialize(v).ok())
+                },
+            ) as $crate::ContextSerializer,
+        );
+        $de_map.insert(
+            $key.to_string(),
+            ::std::sync::Arc::new(|bytes: &[u8]| {
+                let v: $ty = $crate::_bincode::deserialize(bytes).ok()?;
+                Some(
+                    ::std::sync::Arc::new(v)
+                        as ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+                )
+            }) as $crate::ContextDeserializer,
+        );
+    };
+}
+
 // ── RuntimeProvider trait ─────────────────────────────────────────────────────
 
 /// 统一运行入口 — 业务代码通过该 trait 启动策略

@@ -139,7 +139,7 @@ impl TaskPublisher for QuicPublisher {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as u64;
-        let data = encode_envelope(&envelope)?;;
+        let data = encode_envelope(&envelope)?;
         let _ = self.broadcast_tx.send(data);
         Ok(())
     }
