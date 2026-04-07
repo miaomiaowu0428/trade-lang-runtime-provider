@@ -4,10 +4,10 @@
 //!
 //! ```text
 //! Monitor binary:
-//!   let publisher = QuicPublisher::bind("0.0.0.0:9200", server_config).await?;
+//!   let publisher = QuicPublisher::bind("0.0.0.0:12581", server_config).await?;
 //!
 //! Executor binary:
-//!   let subscriber = QuicSubscriber::connect("monitor-host:9200", client_config).await?;
+//!   let subscriber = QuicSubscriber::connect("monitor-host:12581", client_config).await?;
 //! ```
 
 use std::net::SocketAddr;
@@ -20,6 +20,70 @@ use tokio::sync::broadcast;
 use super::{TaskEnvelope, TaskPublisher, TaskSubscriber, decode_envelope, encode_envelope};
 
 // ── 自签名证书辅助（开发/内网用）─────────────────────────────────────────────
+
+/// 跳过 TLS 证书验证的 client config（内网/开发用）
+///
+/// monitor 每次启动都会生成新的自签名证书，executor 无法预知其公钥，
+/// 因此内网部署时最简单的做法是直接跳过验证。
+pub fn no_verify_client_config(
+) -> Result<quinn::ClientConfig, Box<dyn std::error::Error + Send + Sync>> {
+    #[derive(Debug)]
+    struct NoVerify;
+
+    impl rustls::client::danger::ServerCertVerifier for NoVerify {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &rustls::pki_types::CertificateDer<'_>,
+            _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+            _server_name: &rustls::pki_types::ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: rustls::pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(
+            &self,
+            _msg: &[u8],
+            _cert: &rustls::pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn verify_tls13_signature(
+            &self,
+            _msg: &[u8],
+            _cert: &rustls::pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            vec![
+                rustls::SignatureScheme::ED25519,
+                rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+                rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+                rustls::SignatureScheme::RSA_PSS_SHA256,
+                rustls::SignatureScheme::RSA_PSS_SHA384,
+                rustls::SignatureScheme::RSA_PSS_SHA512,
+            ]
+        }
+    }
+
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_idle_timeout(None);
+    transport.keep_alive_interval(Some(std::time::Duration::from_secs(10)));
+    let transport = Arc::new(transport);
+
+    let crypto = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerify))
+        .with_no_client_auth();
+    let mut client_config = quinn::ClientConfig::new(Arc::new(
+        quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?,
+    ));
+    client_config.transport_config(transport);
+    Ok(client_config)
+}
 
 /// 生成自签名证书，返回 (server_config, client_config)
 ///
