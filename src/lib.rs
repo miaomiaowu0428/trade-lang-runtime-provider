@@ -65,6 +65,9 @@ pub use transport::{
 // bincode re-export for use inside register_context! macro
 #[doc(hidden)]
 pub use bincode as _bincode;
+// bytemuck re-export for use inside register_context_pod! macro
+#[doc(hidden)]
+pub use bytemuck as _bytemuck;
 
 /// 一键注册 context 类型的正反序列化器。
 ///
@@ -95,6 +98,44 @@ macro_rules! register_context {
                 let v: $ty = $crate::_bincode::deserialize(bytes).ok()?;
                 Some(
                     ::std::sync::Arc::new(v)
+                        as ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+                )
+            }) as $crate::ContextDeserializer,
+        );
+    };
+}
+
+/// 一键注册 Pod context 类型的正反序列化器（zerocopy，无 bincode 开销）。
+///
+/// # 用法
+/// ```ignore
+/// trade_lang_runtime_provider::register_context_pod!(ser, de, "my_protocol", MyCtxType, MyCtxPod);
+/// ```
+///
+/// 要求：
+///   - `MyCtxPod: bytemuck::Pod + bytemuck::Zeroable`
+///   - `for<'a> MyCtxPod: From<&'a MyCtxType>`（原始 → Pod）
+///   - `for<'a> MyCtxType: From<&'a MyCtxPod>`（Pod → 原始）
+#[macro_export]
+macro_rules! register_context_pod {
+    ($ser_map:expr, $de_map:expr, $key:literal, $ty:ty, $pod:ty) => {
+        $ser_map.insert(
+            $key.to_string(),
+            ::std::sync::Arc::new(
+                |value: &::std::sync::Arc<dyn ::std::any::Any + Send + Sync>| {
+                    let ctx = value.downcast_ref::<$ty>()?;
+                    let pod = <$pod>::from(ctx);
+                    Some($crate::_bytemuck::bytes_of(&pod).to_vec())
+                },
+            ) as $crate::ContextSerializer,
+        );
+        $de_map.insert(
+            $key.to_string(),
+            ::std::sync::Arc::new(|bytes: &[u8]| {
+                let pod: &$pod = $crate::_bytemuck::try_from_bytes(bytes).ok()?;
+                let ctx = <$ty>::from(pod);
+                Some(
+                    ::std::sync::Arc::new(ctx)
                         as ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
                 )
             }) as $crate::ContextDeserializer,
