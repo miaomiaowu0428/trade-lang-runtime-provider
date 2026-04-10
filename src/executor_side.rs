@@ -9,9 +9,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use log::{error, info, warn};
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use trade_meta_compiler::ast::Strategy;
+use trade_meta_compiler::ast::{Strategy, TriggerBody};
 
 use trade_lang_core::{RuntimeRegistry, TradeTaskContext};
 
@@ -39,6 +40,9 @@ impl ExecutorSide {
     }
 
     /// 运行 Executor 循环：接收 envelope → 查找策略 → spawn pipeline
+    ///
+    /// 收到 `cancel` 后**停止接收新任务**，但等待所有正在运行的 pipeline 自然结束后
+    /// 才返回（Graceful Shutdown）。若需立即强制退出，可在业务侧 cancel `task_cancel`。
     pub async fn run(
         &self,
         subscriber: &mut dyn TaskSubscriber,
@@ -49,12 +53,22 @@ impl ExecutorSide {
             self.strategies.len()
         );
 
+        // task_cancel 独立于 cancel：停止接收新任务时不会级联取消正在运行的 pipeline
+        let task_cancel = CancellationToken::new();
+        let mut join_set = JoinSet::<()>::new();
+
         loop {
             tokio::select! {
                 envelope = subscriber.recv() => {
                     match envelope {
                         Some(envelope) => {
-                            self.handle_task(envelope, &cancel).await;
+                            if let Some((pipeline, on_trigger, tid)) =
+                                self.prepare_task(envelope, &task_cancel).await
+                            {
+                                join_set.spawn(async move {
+                                    pipeline.run(tid, &on_trigger).await;
+                                });
+                            }
                         }
                         None => {
                             warn!("[ExecutorSide] Transport disconnected");
@@ -63,17 +77,31 @@ impl ExecutorSide {
                     }
                 }
                 _ = cancel.cancelled() => {
-                    info!("[ExecutorSide] Received cancel signal, stopping");
+                    info!("[ExecutorSide] Received cancel signal, stop accepting new tasks...");
                     break;
                 }
             }
+        }
+
+        // Graceful drain: 等待所有正在运行的 pipeline 完成
+        let remaining = join_set.len();
+        if remaining > 0 {
+            info!("[ExecutorSide] Waiting for {remaining} task(s) to complete...");
+            while join_set.join_next().await.is_some() {}
+            info!("[ExecutorSide] All tasks completed");
         }
 
         info!("[ExecutorSide] Stopped");
         Ok(())
     }
 
-    async fn handle_task(&self, envelope: TaskEnvelope, cancel: &CancellationToken) {
+    /// 解析 envelope，返回可直接 spawn 的 (pipeline, on_trigger, task_id)；
+    /// 若找不到策略或反序列化失败则返回 None。
+    async fn prepare_task(
+        &self,
+        envelope: TaskEnvelope,
+        task_cancel: &CancellationToken,
+    ) -> Option<(TradePipeline, TriggerBody, u64)> {
         let task_id = envelope.task_id;
         let strategy_name = &envelope.strategy_name;
 
@@ -84,7 +112,7 @@ impl ExecutorSide {
                     "[ExecutorSide] Task #{}: unknown strategy '{}', skipping",
                     task_id, strategy_name
                 );
-                return;
+                return None;
             }
         };
 
@@ -93,7 +121,7 @@ impl ExecutorSide {
             task_id, strategy_name
         );
 
-        let ctx = Arc::new(TradeTaskContext::with_parent_cancel(cancel));
+        let ctx = Arc::new(TradeTaskContext::with_parent_cancel(task_cancel));
         init_vars(&ctx, &strategy.vars).await;
 
         // 反序列化并注入上下文
@@ -120,10 +148,6 @@ impl ExecutorSide {
 
         let pipeline = TradePipeline::new(Arc::clone(&self.registry), ctx);
         let on_trigger = strategy.monitor.on_trigger.clone();
-        let tid = task_id;
-
-        tokio::spawn(async move {
-            pipeline.run(tid, &on_trigger).await;
-        });
+        Some((pipeline, on_trigger, task_id))
     }
 }
