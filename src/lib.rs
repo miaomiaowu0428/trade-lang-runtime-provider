@@ -29,9 +29,8 @@ use tokio_util::sync::CancellationToken;
 // ── Re-export core ────────────────────────────────────────────────────────────
 pub use trade_lang_core;
 pub use trade_lang_core::{
-    CancellationToken as _CT, ConditionHandler,
-    DataItemHandler, ExecutorHandler, MonitorHandler, MonitorMessage, RuntimeRegistry,
-    TradeTaskContext, monitor_mpsc,
+    CancellationToken as _CT, ConditionHandler, DataItemHandler, ExecutorHandler, MonitorHandler,
+    MonitorMessage, RuntimeRegistry, TradeTaskContext, monitor_mpsc,
 };
 
 // ── 核心模块 ──────────────────────────────────────────────────────────────────
@@ -93,15 +92,15 @@ macro_rules! register_context {
             ) as $crate::ContextSerializer,
         );
         $de_map.insert(
-            $key.to_string(),
-            ::std::sync::Arc::new(|bytes: &[u8]| {
-                let v: $ty = $crate::_bincode::deserialize(bytes).ok()?;
-                Some(
-                    ::std::sync::Arc::new(v)
-                        as ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
-                )
-            }) as $crate::ContextDeserializer,
-        );
+                            $key.to_string(),
+                            ::std::sync::Arc::new(|bytes: &[u8]| {
+                                let v: $ty = $crate::_bincode::deserialize(bytes).ok()?;
+                                Some(
+                                    ::std::sync::Arc::new(v)
+                                        as ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+                                )
+                            }) as $crate::ContextDeserializer,
+                        );
     };
 }
 
@@ -134,10 +133,8 @@ macro_rules! register_context_pod {
             ::std::sync::Arc::new(|bytes: &[u8]| {
                 let pod: &$pod = $crate::_bytemuck::try_from_bytes(bytes).ok()?;
                 let ctx = <$ty>::from(pod);
-                Some(
-                    ::std::sync::Arc::new(ctx)
-                        as ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
-                )
+                Some(::std::sync::Arc::new(ctx)
+                    as ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>)
             }) as $crate::ContextDeserializer,
         );
     };

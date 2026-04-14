@@ -25,8 +25,8 @@ use super::{TaskEnvelope, TaskPublisher, TaskSubscriber, decode_envelope, encode
 ///
 /// monitor 每次启动都会生成新的自签名证书，executor 无法预知其公钥，
 /// 因此内网部署时最简单的做法是直接跳过验证。
-pub fn no_verify_client_config(
-) -> Result<quinn::ClientConfig, Box<dyn std::error::Error + Send + Sync>> {
+pub fn no_verify_client_config()
+-> Result<quinn::ClientConfig, Box<dyn std::error::Error + Send + Sync>> {
     #[derive(Debug)]
     struct NoVerify;
 

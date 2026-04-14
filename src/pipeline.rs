@@ -227,42 +227,40 @@ impl TradePipeline {
                         false
                     }
                 }
-                Condition::Combinator { name, conditions } => {
-                    match name.as_str() {
-                        "All" => {
-                            let futs: Vec<_> = conditions
-                                .iter()
-                                .map(|c| {
-                                    let p = self.clone();
-                                    let c = c.clone();
-                                    async move { p.eval_condition(&c).await }
-                                })
-                                .collect();
-                            futures::future::join_all(futs).await.iter().all(|&r| r)
-                        }
-                        "OneOf" => {
-                            use futures::stream::{FuturesUnordered, StreamExt};
-                            let mut futs: FuturesUnordered<_> = conditions
-                                .iter()
-                                .map(|c| {
-                                    let p = self.clone();
-                                    let c = c.clone();
-                                    async move { p.eval_condition(&c).await }
-                                })
-                                .collect();
-                            while let Some(ok) = futs.next().await {
-                                if ok {
-                                    return true;
-                                }
-                            }
-                            false
-                        }
-                        other => {
-                            warn!("[Pipeline] unknown combinator: {}", other);
-                            false
-                        }
+                Condition::Combinator { name, conditions } => match name.as_str() {
+                    "All" => {
+                        let futs: Vec<_> = conditions
+                            .iter()
+                            .map(|c| {
+                                let p = self.clone();
+                                let c = c.clone();
+                                async move { p.eval_condition(&c).await }
+                            })
+                            .collect();
+                        futures::future::join_all(futs).await.iter().all(|&r| r)
                     }
-                }
+                    "OneOf" => {
+                        use futures::stream::{FuturesUnordered, StreamExt};
+                        let mut futs: FuturesUnordered<_> = conditions
+                            .iter()
+                            .map(|c| {
+                                let p = self.clone();
+                                let c = c.clone();
+                                async move { p.eval_condition(&c).await }
+                            })
+                            .collect();
+                        while let Some(ok) = futs.next().await {
+                            if ok {
+                                return true;
+                            }
+                        }
+                        false
+                    }
+                    other => {
+                        warn!("[Pipeline] unknown combinator: {}", other);
+                        false
+                    }
+                },
                 Condition::Seq { items } => {
                     // 顺序跑完执行器序列→ true；期间 Done 信号到达→ false
                     let done_triggered = self.exec_executor_items(items).await;
@@ -351,7 +349,6 @@ impl TradePipeline {
         }
     }
 }
-
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 辅助函数（pub(crate) 供 runner/decision/executor 模块使用）
