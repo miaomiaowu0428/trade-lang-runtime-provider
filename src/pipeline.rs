@@ -155,7 +155,7 @@ impl TradePipeline {
         if let Some(handler) = self.runtime.executors.get(name.as_str()) {
             handler.execute(&args, &self.ctx).await
         } else if let Some(handler) = self.runtime.conditions.get(name.as_str()) {
-            let ok = handler.evaluate(&args, &self.ctx).await;
+            let ok = handler.evaluate(&args, &self.ctx).await.0;
             Some(RuntimeValue::Bool(ok))
         } else if let Some(handler) = self.runtime.data_items.get(name.as_str()) {
             Some(handler.get(&args, &self.ctx).await)
@@ -222,7 +222,7 @@ impl TradePipeline {
                 Condition::Call(call) => {
                     if let Some(handler) = self.runtime.conditions.get(call.name.name.as_str()) {
                         let args = self.eval_named_args(&call.args).await;
-                        handler.evaluate(&args, &self.ctx).await
+                        handler.evaluate(&args, &self.ctx).await.0
                     } else {
                         false
                     }
@@ -241,6 +241,17 @@ impl TradePipeline {
                     }
                     "OneOf" => {
                         use futures::stream::{FuturesUnordered, StreamExt};
+                        // 预先将所有 LetBound 的目标变量初始化为 Uninit，
+                        // 保证落败一侧的 targets 在 OneOf 结束后是 Uninit 状态。
+                        for cond in conditions {
+                            if let Condition::LetBound { targets, .. } = cond {
+                                for target in targets {
+                                    if let Some(name) = target {
+                                        self.ctx.set_var(name, RuntimeValue::Uninit).await;
+                                    }
+                                }
+                            }
+                        }
                         let mut futs: FuturesUnordered<_> = conditions
                             .iter()
                             .map(|c| {
@@ -265,6 +276,23 @@ impl TradePipeline {
                     // 顺序跑完执行器序列→ true；期间 Done 信号到达→ false
                     let done_triggered = self.exec_executor_items(items).await;
                     !done_triggered
+                }
+                Condition::LetBound { targets, inner } => {
+                    // 运行内部条件，触发时将偏值解构绑定到 targets
+                    if let Condition::Call(call) = inner.as_ref() {
+                        let args = self.eval_named_args(&call.args).await;
+                        if let Some(handler) = self.runtime.conditions.get(call.name.name.as_str())
+                        {
+                            let (triggered, side_value) = handler.evaluate(&args, &self.ctx).await;
+                            if triggered {
+                                if let Some(rv) = side_value {
+                                    self.destructure(targets, rv).await;
+                                }
+                            }
+                            return triggered;
+                        }
+                    }
+                    false
                 }
             }
         })
