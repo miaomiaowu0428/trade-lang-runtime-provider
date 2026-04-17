@@ -296,6 +296,14 @@ impl TradePipeline {
                     }
                 }
                 DataExpr::BinOp { left, op, right } => {
+                    if *op == BinOp::Or {
+                        // 懒求值：左侧非 Uninit 则直接返回，否则才求右侧
+                        let l = self.eval_expr(left).await;
+                        if !l.is_uninit() {
+                            return l;
+                        }
+                        return self.eval_expr(right).await;
+                    }
                     let l = self.eval_expr(left).await.as_f64();
                     let r = self.eval_expr(right).await.as_f64();
                     RuntimeValue::Number(match op {
@@ -309,6 +317,7 @@ impl TradePipeline {
                                 0.0
                             }
                         }
+                        BinOp::Or => unreachable!(),
                     })
                 }
                 DataExpr::Call(call) => self
