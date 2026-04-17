@@ -40,6 +40,7 @@ impl TradePipeline {
 
     /// 执行完整的交易流程
     pub async fn run(&self, task_id: u64, trigger: &TriggerBody) {
+        // ── buy 阶段 ─────────────────────────────────────────────────────
         info!("  [Task#{}] ─── buy ───", task_id);
         for stmt in &trigger.buy {
             if self.ctx.is_done() {
@@ -51,6 +52,14 @@ impl TradePipeline {
             }
         }
 
+        // ── buy 结果处理：confirm 或 cancel 所有 handles ─────────────────
+        if !self.ctx.is_done() {
+            self.ctx.confirm_all_handles().await;
+        } else {
+            self.ctx.cancel_all_handles().await;
+        }
+
+        // ── sell 阶段 ─────────────────────────────────────────────────────
         if !self.ctx.is_done() {
             info!("  [Task#{}] ─── sell ───", task_id);
             for stmt in &trigger.sell {
