@@ -119,31 +119,46 @@ impl TradePipeline {
 
     // ── ExecutorItem 序列 ─────────────────────────────────────────────────────
 
-    async fn exec_executor_items(&self, items: &[ExecutorItem]) -> bool {
-        for item in items {
-            if self.ctx.is_done() {
-                return true;
-            }
-            match item {
-                ExecutorItem::LetAssign { var_name, value } => {
-                    let v = self.eval_expr(value).await;
-                    self.ctx.set_var(var_name, v).await;
+    fn exec_executor_items<'a>(
+        &'a self,
+        items: &'a [ExecutorItem],
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move {
+            for item in items {
+                if self.ctx.is_done() {
+                    return true;
                 }
-                ExecutorItem::LetDestructure { targets, value } => {
-                    let rv = self.eval_expr(value).await;
-                    self.destructure(targets, rv).await;
-                }
-                ExecutorItem::Executor(ec) => {
-                    let name = ec.executor.name.as_str();
-                    if name == "Done" {
-                        self.ctx.signal_done();
-                        return true;
+                match item {
+                    ExecutorItem::LetAssign { var_name, value } => {
+                        let v = self.eval_expr(value).await;
+                        self.ctx.set_var(var_name, v).await;
                     }
-                    self.exec_executor_call(ec).await;
+                    ExecutorItem::LetDestructure { targets, value } => {
+                        let rv = self.eval_expr(value).await;
+                        self.destructure(targets, rv).await;
+                    }
+                    ExecutorItem::Executor(ec) => {
+                        let name = ec.executor.name.as_str();
+                        if name == "Done" {
+                            self.ctx.signal_done();
+                            return true;
+                        }
+                        self.exec_executor_call(ec).await;
+                    }
+                    ExecutorItem::CondExec {
+                        condition,
+                        executors,
+                    } => {
+                        if self.eval_condition(condition).await {
+                            if self.exec_executor_items(executors).await {
+                                return true;
+                            }
+                        }
+                    }
                 }
             }
-        }
-        false
+            false
+        })
     }
 
     // ── Call 分派 ─────────────────────────────────────────────────────────────
