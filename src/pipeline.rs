@@ -7,6 +7,7 @@
 //!   - LocalRuntime：monitor 触发后直接创建 pipeline
 //!   - ExecutorRuntime：收到 TaskEnvelope 后创建 pipeline
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -15,8 +16,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use log::{info, warn};
 
-use trade_meta_compiler::RuntimeValue;
 use trade_meta_compiler::ast::*;
+use trade_meta_compiler::{RuntimeValue, TaskValue};
 
 use trade_lang_core::{RuntimeRegistry, TradeTaskContext};
 
@@ -125,11 +126,31 @@ impl TradePipeline {
                     }
                 }
                 Statement::Spawn { items } => {
-                    let items = items.clone();
-                    let child = self.clone();
-                    tokio::spawn(async move {
-                        child.exec_spawn_items(&items).await;
-                    });
+                    // Spawn 视为普通的 Executor Symbol 分派：pipeline 负责把 `items`
+                    // 组装为一个已就绪的 `PreparedSpawnTask`，以 `RuntimeValue::Task`
+                    // 的形式放入 args，然后调用注册表中的 `Spawn` handler。
+                    //
+                    // 这样 Spawn 从语法糖 → 真正的 Executor 调用，
+                    // 既保留了 `Spawn[...]` 的 DSL 形式，又让 tokio::spawn 的动作
+                    // 落在统一的 handler 执行层，便于打 log / 追踪 / 替换实现。
+                    let prepared: Arc<dyn Any + Send + Sync> =
+                        Arc::new(PreparedSpawnTask {
+                            pipeline: self.clone(),
+                            items: Arc::new(items.clone()),
+                        });
+                    let mut args: HashMap<String, RuntimeValue> = HashMap::new();
+                    args.insert(
+                        "task".to_string(),
+                        RuntimeValue::Task(TaskValue(prepared)),
+                    );
+                    if let Some(handler) = self.runtime.executors.get("Spawn") {
+                        handler.execute(&args, &self.ctx).await;
+                    } else {
+                        warn!(
+                            "[Pipeline] 'Spawn' executor not registered; dropping {} spawn items",
+                            items.len()
+                        );
+                    }
                     false
                 }
             }
@@ -183,7 +204,7 @@ impl TradePipeline {
     /// Spawn 专用执行序列：对 CondExec 不做 is_done 入口拦截。
     /// Condition 内部（如 CompetitorBought / PumpMigrated）已通过 `ctx.done_future()` 响应
     /// done 信号，无需在此处提前退出——提前退出会导致 subscriber 永远无法注册。
-    fn exec_spawn_items<'a>(
+    pub fn exec_spawn_items<'a>(
         &'a self,
         items: &'a [ExecutorItem],
     ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
@@ -524,5 +545,29 @@ fn apply_compare_op(op: CompareOp, l: f64, r: f64) -> bool {
         CompareOp::Lt => l < r,
         CompareOp::Eq => (l - r).abs() < f64::EPSILON,
         CompareOp::Ne => (l - r).abs() >= f64::EPSILON,
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PreparedSpawnTask — 组装好的后台任务
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// 由 pipeline 组装、待 `Spawn` executor handler 派发的后台任务。
+///
+/// - `pipeline` 为父 pipeline 的克隆，共享同一个 `TradeTaskContext`
+///   （Done 信号自动传播、confirm_handle 自动入队）。
+/// - `items`    为 `Spawn[...]` 括号内的执行器序列。
+///
+/// 经由 `RuntimeValue::Task(TaskValue(Arc<dyn Any>))` 传入 Spawn handler，
+/// 后者 downcast 回本类型后调用 [`run`](Self::run) 在 tokio 上启动。
+pub struct PreparedSpawnTask {
+    pub pipeline: TradePipeline,
+    pub items: Arc<Vec<ExecutorItem>>,
+}
+
+impl PreparedSpawnTask {
+    /// 在当前 tokio 运行时上执行任务（调用方负责包裹 `tokio::spawn`）。
+    pub async fn run(self: Arc<Self>) {
+        self.pipeline.exec_spawn_items(&self.items).await;
     }
 }
