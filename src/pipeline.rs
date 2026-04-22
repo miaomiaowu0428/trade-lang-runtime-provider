@@ -57,6 +57,19 @@ impl TradePipeline {
             self.ctx.confirm_all_handles().await;
         } else {
             self.ctx.cancel_all_handles().await;
+            // buy 失败 → 执行 else 块（若有），然后结束，不进入 sell
+            if !trigger.buy_else.is_empty() {
+                info!("  [Task#{}] ─── buy else ───", task_id);
+                for stmt in &trigger.buy_else {
+                    if self.ctx.is_done() {
+                        break;
+                    }
+                    self.exec_statement(stmt).await;
+                }
+            }
+            info!("  [Task#{}] Trade pipeline finished (buy failed)", task_id);
+            self.ctx.signal_done();
+            return;
         }
 
         // ── sell 阶段 ─────────────────────────────────────────────────────
