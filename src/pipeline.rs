@@ -61,9 +61,6 @@ impl TradePipeline {
             if !trigger.buy_else.is_empty() {
                 info!("  [Task#{}] ─── buy else ───", task_id);
                 for stmt in &trigger.buy_else {
-                    if self.ctx.is_done() {
-                        break;
-                    }
                     self.exec_statement(stmt).await;
                 }
             }
