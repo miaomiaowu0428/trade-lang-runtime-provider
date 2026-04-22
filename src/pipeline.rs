@@ -128,7 +128,7 @@ impl TradePipeline {
                     let items = items.clone();
                     let child = self.clone();
                     tokio::spawn(async move {
-                        child.exec_executor_items(&items).await;
+                        child.exec_spawn_items(&items).await;
                     });
                     false
                 }
@@ -172,6 +172,58 @@ impl TradePipeline {
                             if self.exec_executor_items(executors).await {
                                 return true;
                             }
+                        }
+                    }
+                }
+            }
+            false
+        })
+    }
+
+    /// Spawn 专用执行序列：对 CondExec 不做 is_done 入口拦截。
+    /// Condition 内部（如 CompetitorBought / PumpMigrated）已通过 `ctx.done_future()` 响应
+    /// done 信号，无需在此处提前退出——提前退出会导致 subscriber 永远无法注册。
+    fn exec_spawn_items<'a>(
+        &'a self,
+        items: &'a [ExecutorItem],
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move {
+            for item in items {
+                match item {
+                    ExecutorItem::CondExec { condition, executors } => {
+                        // 不检查 is_done：condition 内部会响应 done 信号
+                        if self.eval_condition(condition).await {
+                            if self.ctx.is_done() {
+                                return true;
+                            }
+                            if self.exec_executor_items(executors).await {
+                                return true;
+                            }
+                        }
+                    }
+                    // 其他 item 仍遵守 is_done 守卫
+                    _ => {
+                        if self.ctx.is_done() {
+                            return true;
+                        }
+                        match item {
+                            ExecutorItem::LetAssign { var_name, value } => {
+                                let v = self.eval_expr(value).await;
+                                self.ctx.set_var(var_name, v).await;
+                            }
+                            ExecutorItem::LetDestructure { targets, value } => {
+                                let rv = self.eval_expr(value).await;
+                                self.destructure(targets, rv).await;
+                            }
+                            ExecutorItem::Executor(ec) => {
+                                let name = ec.executor.name.as_str();
+                                if name == "Done" {
+                                    self.ctx.signal_done();
+                                    return true;
+                                }
+                                self.exec_executor_call(ec).await;
+                            }
+                            ExecutorItem::CondExec { .. } => unreachable!(),
                         }
                     }
                 }
