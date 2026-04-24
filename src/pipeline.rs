@@ -86,7 +86,7 @@ impl TradePipeline {
 
         if !trigger.sell_finally.is_empty() {
             info!("  [Task#{}] ─── finally ───", task_id);
-            self.exec_executor_items(&trigger.sell_finally).await;
+            self.exec_finally_items(&trigger.sell_finally).await;
         }
 
         info!("  [Task#{}] Trade pipeline finished", task_id);
@@ -133,16 +133,12 @@ impl TradePipeline {
                     // 这样 Spawn 从语法糖 → 真正的 Executor 调用，
                     // 既保留了 `Spawn[...]` 的 DSL 形式，又让 tokio::spawn 的动作
                     // 落在统一的 handler 执行层，便于打 log / 追踪 / 替换实现。
-                    let prepared: Arc<dyn Any + Send + Sync> =
-                        Arc::new(PreparedSpawnTask {
-                            pipeline: self.clone(),
-                            items: Arc::new(items.clone()),
-                        });
+                    let prepared: Arc<dyn Any + Send + Sync> = Arc::new(PreparedSpawnTask {
+                        pipeline: self.clone(),
+                        items: Arc::new(items.clone()),
+                    });
                     let mut args: HashMap<String, RuntimeValue> = HashMap::new();
-                    args.insert(
-                        "task".to_string(),
-                        RuntimeValue::Task(TaskValue(prepared)),
-                    );
+                    args.insert("task".to_string(), RuntimeValue::Task(TaskValue(prepared)));
                     if let Some(handler) = self.runtime.executors.get("Spawn") {
                         handler.execute(&args, &self.ctx).await;
                     } else {
@@ -201,6 +197,49 @@ impl TradePipeline {
         })
     }
 
+    /// Finally 专用执行序列：不检查 is_done 守卫，确保 finally 块无论如何都能执行。
+    /// 背景：Spawn 后台任务失败时会调用 ctx.signal_done()（macro 生成），
+    /// 若 finally 也检查 is_done，则 finally 里的卖出指令会被跳过，导致代币滞留。
+    fn exec_finally_items<'a>(
+        &'a self,
+        items: &'a [ExecutorItem],
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move {
+            for item in items {
+                // 注意：故意不检查 is_done()，finally 必须无条件执行
+                match item {
+                    ExecutorItem::LetAssign { var_name, value } => {
+                        let v = self.eval_expr(value).await;
+                        self.ctx.set_var(var_name, v).await;
+                    }
+                    ExecutorItem::LetDestructure { targets, value } => {
+                        let rv = self.eval_expr(value).await;
+                        self.destructure(targets, rv).await;
+                    }
+                    ExecutorItem::Executor(ec) => {
+                        let name = ec.executor.name.as_str();
+                        if name == "Done" {
+                            self.ctx.signal_done();
+                            return true;
+                        }
+                        self.exec_executor_call(ec).await;
+                    }
+                    ExecutorItem::CondExec {
+                        condition,
+                        executors,
+                    } => {
+                        if self.eval_condition(condition).await {
+                            if self.exec_executor_items(executors).await {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            false
+        })
+    }
+
     /// Spawn 专用执行序列：对 CondExec 不做 is_done 入口拦截。
     /// Condition 内部（如 CompetitorBought / PumpMigrated）已通过 `ctx.done_future()` 响应
     /// done 信号，无需在此处提前退出——提前退出会导致 subscriber 永远无法注册。
@@ -211,7 +250,10 @@ impl TradePipeline {
         Box::pin(async move {
             for item in items {
                 match item {
-                    ExecutorItem::CondExec { condition, executors } => {
+                    ExecutorItem::CondExec {
+                        condition,
+                        executors,
+                    } => {
                         // 不检查 is_done：condition 内部会响应 done 信号
                         if self.eval_condition(condition).await {
                             if self.ctx.is_done() {
@@ -554,12 +596,15 @@ fn apply_compare_op(op: CompareOp, l: f64, r: f64) -> bool {
 
 /// 由 pipeline 组装、待 `Spawn` executor handler 派发的后台任务。
 ///
-/// - `pipeline` 为父 pipeline 的克隆，共享同一个 `TradeTaskContext`
-///   （Done 信号自动传播、confirm_handle 自动入队）。
+/// - `pipeline` 为父 pipeline 的克隆，持有父 `TradeTaskContext`（用于创建子 ctx）。
 /// - `items`    为 `Spawn[...]` 括号内的执行器序列。
 ///
 /// 经由 `RuntimeValue::Task(TaskValue(Arc<dyn Any>))` 传入 Spawn handler，
 /// 后者 downcast 回本类型后调用 [`run`](Self::run) 在 tokio 上启动。
+///
+/// **隔离语义**：run() 会从父 ctx 派生出 child ctx（`spawn_child`）：
+///   - 父 pipeline 取消 → 子 ctx 也取消（级联向下，任务被及时清理）
+///   - 子任务内部失败调 `signal_done()` → 仅取消子 ctx，**不影响父 pipeline**
 pub struct PreparedSpawnTask {
     pub pipeline: TradePipeline,
     pub items: Arc<Vec<ExecutorItem>>,
@@ -568,6 +613,12 @@ pub struct PreparedSpawnTask {
 impl PreparedSpawnTask {
     /// 在当前 tokio 运行时上执行任务（调用方负责包裹 `tokio::spawn`）。
     pub async fn run(self: Arc<Self>) {
-        self.pipeline.exec_spawn_items(&self.items).await;
+        // 派生子 ctx：共享 vars/contexts，但拥有独立的 cancel token
+        let child_ctx = Arc::new(TradeTaskContext::spawn_child(&self.pipeline.ctx));
+        let child_pipeline = TradePipeline {
+            runtime: Arc::clone(&self.pipeline.runtime),
+            ctx: child_ctx,
+        };
+        child_pipeline.exec_spawn_items(&self.items).await;
     }
 }
