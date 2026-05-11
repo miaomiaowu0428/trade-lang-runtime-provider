@@ -501,6 +501,13 @@ impl TradePipeline {
                     .exec_call(call)
                     .await
                     .unwrap_or(RuntimeValue::Number(0.0)),
+                DataExpr::List(exprs) => {
+                    let mut vals = Vec::with_capacity(exprs.len());
+                    for e in exprs {
+                        vals.push(self.eval_expr(e).await);
+                    }
+                    RuntimeValue::List(vals)
+                }
                 DataExpr::Tuple(exprs) => {
                     let mut vals = Vec::with_capacity(exprs.len());
                     for e in exprs {
@@ -552,6 +559,9 @@ pub(crate) fn eval_named_args_static(args: &[NamedArg]) -> HashMap<String, Runti
 fn value_from_data_expr(expr: &DataExpr) -> RuntimeValue {
     match expr {
         DataExpr::Literal(v) => value_to_runtime(v),
+        DataExpr::List(items) => {
+            RuntimeValue::List(items.iter().map(value_from_data_expr).collect())
+        }
         _ => RuntimeValue::Str("<dynamic>".into()),
     }
 }
