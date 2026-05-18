@@ -104,11 +104,8 @@ impl StrategyRunner {
                             let ctx = Arc::new(TradeTaskContext::with_parent_cancel(&self.cancel));
                             init_vars(&ctx, &strategy.vars).await;
 
-                            {
-                                let mut contexts = ctx.contexts.write().await;
-                                for (protocol, value) in msg.contexts {
-                                    contexts.insert(protocol.to_string(), value);
-                                }
+                            for (protocol, value) in msg.contexts {
+                                ctx.contexts.insert(protocol, value).await;
                             }
 
                             let pipeline = TradePipeline::new(
