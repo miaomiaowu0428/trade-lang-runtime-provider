@@ -1,9 +1,9 @@
 //! 语言内置 handler 注册
 //!
 //! 注册策略 DSL 必需的最小 handler 集合：
-//!   - `Done`  — no-op executor stub（pipeline 按名称识别）
-//!   - `Spawn` — 后台任务派发 executor，接收由 pipeline 组装好的 `RuntimeValue::Task`
+//!   - Done  — no-op executor stub（pipeline 按名称识别）
 //!
+//! Spawn 由 pipeline 直接处理（Statement::Spawn AST 节点）。
 //! All / OneOf / Seq 降级为复合条件，由 pipeline 的 eval_condition 处理。
 //! 通用条件（Timeout / DynTimeout 等）作为 plugin 由 impl crate 按需注册。
 
@@ -11,12 +11,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::{info, warn};
 
 use trade_lang_core::{ExecutorHandler, RuntimeRegistry, TradeTaskContext};
 use trade_meta_compiler::{RuntimeValue, TypeSpec};
-
-use crate::pipeline::PreparedSpawnTask;
 
 // ── Done (no-op stub) ─────────────────────────────────────────────────────────
 
@@ -37,60 +34,11 @@ impl ExecutorHandler for BuiltinNoopExecutor {
     }
 }
 
-// ── Spawn ─────────────────────────────────────────────────────────────────────
-
-/// 后台任务派发 executor。
-///
-/// 接收 pipeline 组装好的 `RuntimeValue::Task`：
-///   - downcast 内部 `Arc<dyn Any>` 为 `Arc<PreparedSpawnTask>`
-///   - `tokio::spawn` 启动任务；共享父 pipeline 的 `TradeTaskContext`
-///
-/// 这层抽象使得 Spawn 在语义上与其他 Executor 完全一致，
-/// 便于统一打 log、监控、替换实现（如切到其他运行时）。
-struct BuiltinSpawnExecutor;
-
-#[async_trait]
-impl ExecutorHandler for BuiltinSpawnExecutor {
-    fn declared_return_type(&self) -> Option<TypeSpec> {
-        None
-    }
-    async fn execute(
-        &self,
-        args: &HashMap<String, RuntimeValue>,
-        _ctx: &Arc<TradeTaskContext>,
-    ) -> Option<RuntimeValue> {
-        let task_rv = match args.get("task") {
-            Some(RuntimeValue::Task(t)) => t.clone(),
-            _ => {
-                warn!("[Spawn] missing or non-Task 'task' arg");
-                return None;
-            }
-        };
-        match task_rv.0.downcast::<PreparedSpawnTask>() {
-            Ok(task) => {
-                let n = task.items.len();
-                info!("[Spawn] dispatching background task ({} item(s))", n);
-                tokio::spawn(async move {
-                    task.run().await;
-                    info!("[Spawn] background task finished");
-                });
-            }
-            Err(_) => {
-                warn!("[Spawn] task payload type mismatch (not PreparedSpawnTask)");
-            }
-        }
-        None
-    }
-}
-
 // ── 注册 ──────────────────────────────────────────────────────────────────────
 
-/// 注册语言内置 handler（Done / Spawn）
+/// 注册语言内置 handler（Done）
 pub fn register_builtins(registry: &mut RuntimeRegistry) {
     registry
         .executors
         .insert("Done".to_string(), Arc::new(BuiltinNoopExecutor));
-    registry
-        .executors
-        .insert("Spawn".to_string(), Arc::new(BuiltinSpawnExecutor));
 }
