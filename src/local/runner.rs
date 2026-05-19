@@ -102,7 +102,7 @@ impl StrategyRunner {
                             );
 
                             let ctx = Arc::new(TradeTaskContext::with_parent_cancel(&self.cancel));
-                            init_vars(&ctx, &strategy.vars).await;
+                            init_vars(&ctx, &strategy.vars);
 
                             {
                                 let mut ctxs = ctx.contexts.write();

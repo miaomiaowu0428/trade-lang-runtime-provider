@@ -103,12 +103,12 @@ impl TradePipeline {
             match stmt {
                 Statement::LetAssign { var_name, value } => {
                     let v = self.eval_expr(value).await;
-                    self.ctx.set_var(var_name, v).await;
+                    self.ctx.set_var_sync(var_name, v);
                     false
                 }
                 Statement::LetDestructure { targets, value } => {
                     let rv = self.eval_expr(value).await;
-                    self.destructure(targets, rv).await;
+                    self.destructure(targets, rv);
                     false
                 }
                 Statement::Executor { call } => {
@@ -167,11 +167,11 @@ impl TradePipeline {
                 match item {
                     ExecutorItem::LetAssign { var_name, value } => {
                         let v = self.eval_expr(value).await;
-                        self.ctx.set_var(var_name, v).await;
+                        self.ctx.set_var_sync(var_name, v);
                     }
                     ExecutorItem::LetDestructure { targets, value } => {
                         let rv = self.eval_expr(value).await;
-                        self.destructure(targets, rv).await;
+                        self.destructure(targets, rv);
                     }
                     ExecutorItem::Executor(ec) => {
                         let name = ec.executor.name.as_str();
@@ -210,11 +210,11 @@ impl TradePipeline {
                 match item {
                     ExecutorItem::LetAssign { var_name, value } => {
                         let v = self.eval_expr(value).await;
-                        self.ctx.set_var(var_name, v).await;
+                        self.ctx.set_var_sync(var_name, v);
                     }
                     ExecutorItem::LetDestructure { targets, value } => {
                         let rv = self.eval_expr(value).await;
-                        self.destructure(targets, rv).await;
+                        self.destructure(targets, rv);
                     }
                     ExecutorItem::Executor(ec) => {
                         let name = ec.executor.name.as_str();
@@ -272,11 +272,11 @@ impl TradePipeline {
                         match item {
                             ExecutorItem::LetAssign { var_name, value } => {
                                 let v = self.eval_expr(value).await;
-                                self.ctx.set_var(var_name, v).await;
+                                self.ctx.set_var_sync(var_name, v);
                             }
                             ExecutorItem::LetDestructure { targets, value } => {
                                 let rv = self.eval_expr(value).await;
-                                self.destructure(targets, rv).await;
+                                self.destructure(targets, rv);
                             }
                             ExecutorItem::Executor(ec) => {
                                 let name = ec.executor.name.as_str();
@@ -330,7 +330,7 @@ impl TradePipeline {
     // ── Args evaluation ───────────────────────────────────────────────────────
 
     async fn eval_named_args(&self, args: &[NamedArg]) -> HashMap<String, RuntimeValue> {
-        let mut map = HashMap::new();
+        let mut map = HashMap::with_capacity(args.len());
         for arg in args {
             let v = self.eval_expr(&arg.value).await;
             map.insert(arg.name.clone(), v);
@@ -342,7 +342,7 @@ impl TradePipeline {
         &self,
         args: &HashMap<String, DataExpr>,
     ) -> HashMap<String, RuntimeValue> {
-        let mut map = HashMap::new();
+        let mut map = HashMap::with_capacity(args.len());
         for (k, v) in args {
             map.insert(k.clone(), self.eval_expr(v).await);
         }
@@ -396,7 +396,7 @@ impl TradePipeline {
                             if let Condition::LetBound { targets, .. } = cond {
                                 for target in targets {
                                     if let Some(name) = target {
-                                        self.ctx.set_var(name, RuntimeValue::Uninit).await;
+                                        self.ctx.set_var_sync(name, RuntimeValue::Uninit);
                                     }
                                 }
                             }
@@ -435,7 +435,7 @@ impl TradePipeline {
                             let (triggered, side_value) = handler.evaluate(&args, &self.ctx).await;
                             if triggered {
                                 if let Some(rv) = side_value {
-                                    self.destructure(targets, rv).await;
+                                    self.destructure(targets, rv);
                                 }
                             }
                             return triggered;
@@ -457,7 +457,7 @@ impl TradePipeline {
             match expr {
                 DataExpr::Literal(v) => value_to_runtime(v),
                 DataExpr::Var(name) => {
-                    if let Some(v) = self.ctx.get_var(name).await {
+                    if let Some(v) = self.ctx.get_var_sync(name) {
                         return v;
                     }
                     if let Some(handler) = self.runtime.data_items.get(name.as_str()) {
@@ -521,23 +521,23 @@ impl TradePipeline {
 
     // ── 辅助 ──────────────────────────────────────────────────────────────────
 
-    async fn destructure(&self, targets: &[Option<String>], value: RuntimeValue) {
+    fn destructure(&self, targets: &[Option<String>], value: RuntimeValue) {
         let vals = match value {
             RuntimeValue::Tuple(v) => v,
             single => vec![single],
         };
         for (target, val) in targets.iter().zip(vals) {
             if let Some(name) = target {
-                self.ctx.set_var(name, val).await;
+                self.ctx.set_var_sync(name, val);
             }
         }
     }
 
     /// 失败时将所有解构目标设为 Uninit
-    async fn destructure_uninit(&self, targets: &[Option<String>]) {
+    fn destructure_uninit(&self, targets: &[Option<String>]) {
         for target in targets {
             if let Some(name) = target {
-                self.ctx.set_var(name, RuntimeValue::Uninit).await;
+                self.ctx.set_var_sync(name, RuntimeValue::Uninit);
             }
         }
     }
@@ -567,10 +567,9 @@ fn value_from_data_expr(expr: &DataExpr) -> RuntimeValue {
 }
 
 /// 初始化 TradeTaskContext 的变量表
-pub(crate) async fn init_vars(ctx: &TradeTaskContext, vars: &VarsBlock) {
+pub(crate) fn init_vars(ctx: &TradeTaskContext, vars: &VarsBlock) {
     for var in &vars.vars {
-        let default = RuntimeValue::Number(0.0);
-        ctx.set_var(&var.name, default).await;
+        ctx.set_var_sync(&var.name, RuntimeValue::Number(0.0));
     }
 }
 
