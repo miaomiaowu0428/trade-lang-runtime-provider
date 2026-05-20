@@ -301,7 +301,8 @@ impl TradePipeline {
         let name = &call.name.name;
         let args = self.eval_named_args(&call.args).await;
 
-        if let Some(handler) = self.runtime.executors.get(name.as_str()) {
+        let enter_elapsed = self.ctx.sig_time.map(|t| t.elapsed());
+        let result = if let Some(handler) = self.runtime.executors.get(name.as_str()) {
             handler.execute(&args, &self.ctx).await
         } else if let Some(handler) = self.runtime.conditions.get(name.as_str()) {
             let ok = handler.evaluate(&args, &self.ctx).await.0;
@@ -311,20 +312,39 @@ impl TradePipeline {
         } else {
             warn!("    [warn] '{}' not found in runtime", name);
             None
+        };
+        if let Some(enter) = enter_elapsed {
+            info!(
+                "  [Symbol] {} │ enter={:?} exit={:?}",
+                name,
+                enter,
+                self.ctx.sig_time.map(|t| t.elapsed()).unwrap_or_default(),
+            );
         }
+        result
     }
 
     async fn exec_executor_call(&self, ec: &ExecutorCall) -> Option<RuntimeValue> {
         let name = ec.executor.name.as_str();
         let args = self.eval_hashmap_args(&ec.args).await;
-        if let Some(handler) = self.runtime.executors.get(name) {
+        let enter_elapsed = self.ctx.sig_time.map(|t| t.elapsed());
+        let result = if let Some(handler) = self.runtime.executors.get(name) {
             handler.execute(&args, &self.ctx).await
         } else if let Some(handler) = self.runtime.data_items.get(name) {
             Some(handler.get(&args, &self.ctx).await)
         } else {
             warn!("    [warn] executor/data '{}' not registered", name);
             None
+        };
+        if let Some(enter) = enter_elapsed {
+            info!(
+                "  [Symbol] {} │ enter={:?} exit={:?}",
+                name,
+                enter,
+                self.ctx.sig_time.map(|t| t.elapsed()).unwrap_or_default(),
+            );
         }
+        result
     }
 
     // ── Args evaluation ───────────────────────────────────────────────────────

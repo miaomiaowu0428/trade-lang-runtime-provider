@@ -101,8 +101,12 @@ impl StrategyRunner {
                                 monitor_name, task_id
                             );
 
-                            let ctx = Arc::new(TradeTaskContext::with_parent_cancel(&self.cancel));
-                            init_vars(&ctx, &strategy.vars);
+                            let mut ctx_inner =
+                                TradeTaskContext::with_parent_cancel(&self.cancel);
+                            // 把触发信号时刻透传给 ctx，pipeline 用于自动打点
+                            ctx_inner.sig_time = msg.sig_time;
+                            init_vars(&ctx_inner, &strategy.vars);
+                            let ctx = Arc::new(ctx_inner);
 
                             {
                                 let mut ctxs = ctx.contexts.write();
