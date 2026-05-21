@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use log::{error, info};
+use log::{debug, error, info};
 use tokio_util::sync::CancellationToken;
 
 use trade_meta_compiler::ast::*;
@@ -89,6 +89,10 @@ impl StrategyRunner {
         let mut rx = monitor.start(&monitor_args, self.cancel.clone()).await;
         let mut task_id: u64 = 0;
 
+        // 热路优化：on_trigger 包含 4 个 Vec<Statement>，每次 trigger 深拷贝是不必要的。
+        // 预先 Arc 包装，后续只做 Arc::clone（原子计数）。
+        let on_trigger = Arc::new(strategy.monitor.on_trigger.clone());
+
         loop {
             tokio::select! {
                 msg = rx.recv() => {
@@ -109,12 +113,11 @@ impl StrategyRunner {
                                 Arc::clone(&self.runtime),
                                 ctx,
                             );
-                            let on_trigger = strategy.monitor.on_trigger.clone();
+                            let on_trigger = Arc::clone(&on_trigger);
                             let tid = task_id;
                             tokio::spawn(async move {
                                 pipeline.run(tid, &on_trigger).await;
                             });
-                            // Fix1: info! 移到 spawn 之后，不阻塞热路径
                             info!("");
                             info!(
                                 "  ★ Monitor '{}' triggered! Spawning trade task #{}",
