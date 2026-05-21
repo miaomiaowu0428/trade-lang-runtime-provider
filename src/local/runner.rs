@@ -95,25 +95,15 @@ impl StrategyRunner {
                     match msg {
                         Some(msg) => {
                             task_id += 1;
-                            info!("");
-                            info!(
-                                "  ★ Monitor '{}' triggered! Spawning trade task #{}",
-                                monitor_name, task_id
-                            );
 
                             let mut ctx_inner =
                                 TradeTaskContext::with_parent_cancel(&self.cancel);
                             // 把触发信号时刻透传给 ctx，pipeline 用于自动打点
                             ctx_inner.sig_time = msg.sig_time;
                             init_vars(&ctx_inner, &strategy.vars);
+                            // Fix4: 直接赋值替换空 Vec，避免 write-lock + 循环 push
+                            *ctx_inner.contexts.write() = msg.contexts;
                             let ctx = Arc::new(ctx_inner);
-
-                            {
-                                let mut ctxs = ctx.contexts.write();
-                                for (protocol, value) in msg.contexts {
-                                    ctxs.push((protocol, value));
-                                }
-                            }
 
                             let pipeline = TradePipeline::new(
                                 Arc::clone(&self.runtime),
@@ -124,6 +114,12 @@ impl StrategyRunner {
                             tokio::spawn(async move {
                                 pipeline.run(tid, &on_trigger).await;
                             });
+                            // Fix1: info! 移到 spawn 之后，不阻塞热路径
+                            info!("");
+                            info!(
+                                "  ★ Monitor '{}' triggered! Spawning trade task #{}",
+                                monitor_name, task_id
+                            );
                         }
                         None => {
                             info!("  [StrategyRunner] Monitor channel closed, exiting");
