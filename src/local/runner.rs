@@ -115,14 +115,18 @@ impl StrategyRunner {
                             );
                             let on_trigger = Arc::clone(&on_trigger);
                             let tid = task_id;
+                            // 热路径：先 spawn，再把日志放进 spawn 内部，避免
+                            // 主 select! 循环被 format!/Display 同步阻塞，
+                            // 影响下一次 rx.recv() 的 poll 时机。
+                            let monitor_name_owned = monitor_name.clone();
                             tokio::spawn(async move {
+                                info!("");
+                                info!(
+                                    "  ★ Monitor '{}' triggered! Spawning trade task #{}",
+                                    monitor_name_owned, tid
+                                );
                                 pipeline.run(tid, &on_trigger).await;
                             });
-                            info!("");
-                            info!(
-                                "  ★ Monitor '{}' triggered! Spawning trade task #{}",
-                                monitor_name, task_id
-                            );
                         }
                         None => {
                             info!("  [StrategyRunner] Monitor channel closed, exiting");
