@@ -589,7 +589,11 @@ fn value_from_data_expr(expr: &DataExpr) -> RuntimeValue {
 /// 初始化 TradeTaskContext 的变量表
 pub(crate) fn init_vars(ctx: &TradeTaskContext, vars: &VarsBlock) {
     for var in &vars.vars {
-        ctx.set_var_sync(&var.name, RuntimeValue::Number(0.0));
+        let value = match var.var_type {
+            VarType::Bool => RuntimeValue::Bool(false),
+            _ => RuntimeValue::Number(0.0),
+        };
+        ctx.set_var_sync(&var.name, value);
     }
 }
 
