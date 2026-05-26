@@ -38,7 +38,7 @@ impl ExecutorHandler for BuiltinNoopExecutor {
 /// 内置 Spawn executor：接收 pipeline 组装好的 `PreparedSpawnTask`，
 /// 在 tokio 上 spawn 后台任务。
 ///
-/// pipeline 在处理 `Statement::Spawn` 时把 `PreparedSpawnTask` 包装为
+/// pipeline 在处理 `BlockItem::Spawn` 时把 `PreparedSpawnTask` 包装为
 /// `RuntimeValue::Task`，通过 args["task"] 传入此处。
 struct BuiltinSpawnExecutor;
 

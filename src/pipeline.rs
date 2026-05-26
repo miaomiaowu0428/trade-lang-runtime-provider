@@ -13,7 +13,6 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use log::{info, warn};
 
 use trade_meta_compiler::ast::*;
@@ -34,6 +33,16 @@ pub struct TradePipeline {
     pub ctx: Arc<TradeTaskContext>,
 }
 
+#[derive(Clone, Copy)]
+enum ExecMode {
+    /// 普通 buy/sell/condition 分支：每个 item 前检查 Done。
+    Normal,
+    /// Spawn 子任务：CondExec 允许先注册/等待 condition，其它 item 前检查 Done。
+    Spawn,
+    /// finally 块：不做入口 Done 检查，确保兜底逻辑能执行。
+    Finally,
+}
+
 impl TradePipeline {
     pub fn new(runtime: Arc<RuntimeRegistry>, ctx: Arc<TradeTaskContext>) -> Self {
         Self { runtime, ctx }
@@ -48,7 +57,7 @@ impl TradePipeline {
                 info!("  [Task#{}] Done signal, exiting buy", task_id);
                 break;
             }
-            if self.exec_statement(stmt).await {
+            if self.exec_block_item(stmt, ExecMode::Normal).await {
                 break;
             }
         }
@@ -62,7 +71,7 @@ impl TradePipeline {
             if !trigger.buy_else.is_empty() {
                 info!("  [Task#{}] ─── buy else ───", task_id);
                 for stmt in &trigger.buy_else {
-                    self.exec_statement(stmt).await;
+                    self.exec_block_item(stmt, ExecMode::Normal).await;
                 }
             }
             info!("  [Task#{}] Trade pipeline finished (buy failed)", task_id);
@@ -78,7 +87,7 @@ impl TradePipeline {
                     info!("  [Task#{}] Done signal, exiting sell", task_id);
                     break;
                 }
-                if self.exec_statement(stmt).await {
+                if self.exec_block_item(stmt, ExecMode::Normal).await {
                     break;
                 }
             }
@@ -86,213 +95,104 @@ impl TradePipeline {
 
         if !trigger.sell_finally.is_empty() {
             info!("  [Task#{}] ─── finally ───", task_id);
-            self.exec_finally_items(&trigger.sell_finally).await;
+            self.exec_block(&trigger.sell_finally, ExecMode::Finally)
+                .await;
         }
 
         info!("  [Task#{}] Trade pipeline finished", task_id);
         self.ctx.signal_done();
     }
 
-    // ── Statement execution ───────────────────────────────────────────────────
+    // ── BlockItem execution ──────────────────────────────────────────────────
 
-    fn exec_statement<'a>(
+    fn exec_block<'a>(
         &'a self,
-        stmt: &'a Statement,
+        items: &'a [BlockItem],
+        mode: ExecMode,
     ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
         Box::pin(async move {
-            match stmt {
-                Statement::LetAssign { var_name, value } => {
+            for item in items {
+                if self.exec_block_item(item, mode).await {
+                    return true;
+                }
+            }
+            false
+        })
+    }
+
+    fn exec_block_item<'a>(
+        &'a self,
+        item: &'a BlockItem,
+        mode: ExecMode,
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move {
+            let skip_for_done = match mode {
+                ExecMode::Normal => self.ctx.is_done(),
+                // Spawn 中 CondExec 不能被入口 done 短路，否则早注册的监听条件永远无法启动；
+                // condition 自身会通过 ctx.done_future() 响应取消。
+                ExecMode::Spawn => {
+                    self.ctx.is_done() && !matches!(item, BlockItem::CondExec { .. })
+                }
+                ExecMode::Finally => false,
+            };
+            if skip_for_done {
+                return true;
+            }
+
+            match item {
+                BlockItem::LetAssign { var_name, value } => {
                     let v = self.eval_expr(value).await;
                     self.ctx.set_var_sync(var_name, v);
                     false
                 }
-                Statement::LetDestructure { targets, value } => {
+                BlockItem::LetDestructure { targets, value } => {
                     let rv = self.eval_expr(value).await;
                     self.destructure(targets, rv);
                     false
                 }
-                Statement::Executor { call } => {
+                BlockItem::Executor { call } => {
+                    if call.name.name == "Done" {
+                        self.ctx.signal_done();
+                        return true;
+                    }
                     self.exec_call(call).await;
                     false
                 }
-                Statement::ConditionExec {
-                    condition,
-                    executors,
-                } => {
+                BlockItem::CondExec { condition, body } => {
                     if self.eval_condition(condition).await {
-                        self.exec_executor_items(executors).await
+                        if matches!(mode, ExecMode::Spawn) && self.ctx.is_done() {
+                            return true;
+                        }
+                        self.exec_block(body, mode).await
                     } else {
                         false
                     }
                 }
-                Statement::Spawn { items } => {
-                    // Spawn 视为普通的 Executor Symbol 分派：pipeline 负责把 `items`
-                    // 组装为一个已就绪的 `PreparedSpawnTask`，以 `RuntimeValue::Task`
-                    // 的形式放入 args，然后调用注册表中的 `Spawn` handler。
-                    //
-                    // 这样 Spawn 从语法糖 → 真正的 Executor 调用，
-                    // 既保留了 `Spawn[...]` 的 DSL 形式，又让 tokio::spawn 的动作
-                    // 落在统一的 handler 执行层，便于打 log / 追踪 / 替换实现。
-                    let prepared: Arc<dyn Any + Send + Sync> = Arc::new(PreparedSpawnTask {
-                        pipeline: self.clone(),
-                        items: Arc::new(items.clone()),
-                    });
-                    let mut args: HashMap<String, RuntimeValue> = HashMap::new();
-                    args.insert("task".to_string(), RuntimeValue::Task(TaskValue(prepared)));
-                    if let Some(handler) = self.runtime.executors.get("Spawn") {
-                        handler.execute(&args, &self.ctx).await;
-                    } else {
-                        warn!(
-                            "[Pipeline] 'Spawn' executor not registered; dropping {} spawn items",
-                            items.len()
-                        );
-                    }
+                BlockItem::Spawn { items } => {
+                    self.spawn_items(items).await;
                     false
                 }
             }
         })
     }
 
-    // ── ExecutorItem 序列 ─────────────────────────────────────────────────────
-
-    fn exec_executor_items<'a>(
-        &'a self,
-        items: &'a [ExecutorItem],
-    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
-        Box::pin(async move {
-            for item in items {
-                if self.ctx.is_done() {
-                    return true;
-                }
-                match item {
-                    ExecutorItem::LetAssign { var_name, value } => {
-                        let v = self.eval_expr(value).await;
-                        self.ctx.set_var_sync(var_name, v);
-                    }
-                    ExecutorItem::LetDestructure { targets, value } => {
-                        let rv = self.eval_expr(value).await;
-                        self.destructure(targets, rv);
-                    }
-                    ExecutorItem::Executor(ec) => {
-                        let name = ec.executor.name.as_str();
-                        if name == "Done" {
-                            self.ctx.signal_done();
-                            return true;
-                        }
-                        self.exec_executor_call(ec).await;
-                    }
-                    ExecutorItem::CondExec {
-                        condition,
-                        executors,
-                    } => {
-                        if self.eval_condition(condition).await {
-                            if self.exec_executor_items(executors).await {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-            false
-        })
-    }
-
-    /// Finally 专用执行序列：不检查 is_done 守卫，确保 finally 块无论如何都能执行。
-    /// 背景：Spawn 后台任务失败时会调用 ctx.signal_done()（macro 生成），
-    /// 若 finally 也检查 is_done，则 finally 里的卖出指令会被跳过，导致代币滞留。
-    fn exec_finally_items<'a>(
-        &'a self,
-        items: &'a [ExecutorItem],
-    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
-        Box::pin(async move {
-            for item in items {
-                // 注意：故意不检查 is_done()，finally 必须无条件执行
-                match item {
-                    ExecutorItem::LetAssign { var_name, value } => {
-                        let v = self.eval_expr(value).await;
-                        self.ctx.set_var_sync(var_name, v);
-                    }
-                    ExecutorItem::LetDestructure { targets, value } => {
-                        let rv = self.eval_expr(value).await;
-                        self.destructure(targets, rv);
-                    }
-                    ExecutorItem::Executor(ec) => {
-                        let name = ec.executor.name.as_str();
-                        if name == "Done" {
-                            self.ctx.signal_done();
-                            return true;
-                        }
-                        self.exec_executor_call(ec).await;
-                    }
-                    ExecutorItem::CondExec {
-                        condition,
-                        executors,
-                    } => {
-                        if self.eval_condition(condition).await {
-                            if self.exec_executor_items(executors).await {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-            false
-        })
-    }
-
-    /// Spawn 专用执行序列：对 CondExec 不做 is_done 入口拦截。
-    /// Condition 内部（如 CompetitorBought / PumpMigrated）已通过 `ctx.done_future()` 响应
-    /// done 信号，无需在此处提前退出——提前退出会导致 subscriber 永远无法注册。
-    pub fn exec_spawn_items<'a>(
-        &'a self,
-        items: &'a [ExecutorItem],
-    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
-        Box::pin(async move {
-            for item in items {
-                match item {
-                    ExecutorItem::CondExec {
-                        condition,
-                        executors,
-                    } => {
-                        // 不检查 is_done：condition 内部会响应 done 信号
-                        if self.eval_condition(condition).await {
-                            if self.ctx.is_done() {
-                                return true;
-                            }
-                            if self.exec_executor_items(executors).await {
-                                return true;
-                            }
-                        }
-                    }
-                    // 其他 item 仍遵守 is_done 守卫
-                    _ => {
-                        if self.ctx.is_done() {
-                            return true;
-                        }
-                        match item {
-                            ExecutorItem::LetAssign { var_name, value } => {
-                                let v = self.eval_expr(value).await;
-                                self.ctx.set_var_sync(var_name, v);
-                            }
-                            ExecutorItem::LetDestructure { targets, value } => {
-                                let rv = self.eval_expr(value).await;
-                                self.destructure(targets, rv);
-                            }
-                            ExecutorItem::Executor(ec) => {
-                                let name = ec.executor.name.as_str();
-                                if name == "Done" {
-                                    self.ctx.signal_done();
-                                    return true;
-                                }
-                                self.exec_executor_call(ec).await;
-                            }
-                            ExecutorItem::CondExec { .. } => unreachable!(),
-                        }
-                    }
-                }
-            }
-            false
-        })
+    /// Spawn 视为普通的 Executor Symbol 分派：pipeline 负责把 `items` 组装为一个
+    /// 已就绪的 `PreparedSpawnTask`，以 `RuntimeValue::Task` 的形式传给内置 Spawn handler。
+    async fn spawn_items(&self, items: &[BlockItem]) {
+        let prepared: Arc<dyn Any + Send + Sync> = Arc::new(PreparedSpawnTask {
+            pipeline: self.clone(),
+            items: Arc::new(items.to_vec()),
+        });
+        let mut args: HashMap<String, RuntimeValue> = HashMap::new();
+        args.insert("task".to_string(), RuntimeValue::Task(TaskValue(prepared)));
+        if let Some(handler) = self.runtime.executors.get("Spawn") {
+            handler.execute(&args, &self.ctx).await;
+        } else {
+            warn!(
+                "[Pipeline] 'Spawn' executor not registered; dropping {} spawn items",
+                items.len()
+            );
+        }
     }
 
     // ── Call 分派 ─────────────────────────────────────────────────────────────
@@ -324,29 +224,6 @@ impl TradePipeline {
         result
     }
 
-    async fn exec_executor_call(&self, ec: &ExecutorCall) -> Option<RuntimeValue> {
-        let name = ec.executor.name.as_str();
-        let args = self.eval_hashmap_args(&ec.args).await;
-        let enter_elapsed = self.ctx.sig_time.map(|t| t.elapsed());
-        let result = if let Some(handler) = self.runtime.executors.get(name) {
-            handler.execute(&args, &self.ctx).await
-        } else if let Some(handler) = self.runtime.data_items.get(name) {
-            Some(handler.get(&args, &self.ctx).await)
-        } else {
-            warn!("    [warn] executor/data '{}' not registered", name);
-            None
-        };
-        if let Some(enter) = enter_elapsed {
-            info!(
-                "  [Symbol] {} │ enter={:?} exit={:?}",
-                name,
-                enter,
-                self.ctx.sig_time.map(|t| t.elapsed()).unwrap_or_default(),
-            );
-        }
-        result
-    }
-
     // ── Args evaluation ───────────────────────────────────────────────────────
 
     async fn eval_named_args(&self, args: &[NamedArg]) -> HashMap<String, RuntimeValue> {
@@ -354,17 +231,6 @@ impl TradePipeline {
         for arg in args {
             let v = self.eval_expr(&arg.value).await;
             map.insert(arg.name.clone(), v);
-        }
-        map
-    }
-
-    async fn eval_hashmap_args(
-        &self,
-        args: &HashMap<String, DataExpr>,
-    ) -> HashMap<String, RuntimeValue> {
-        let mut map = HashMap::with_capacity(args.len());
-        for (k, v) in args {
-            map.insert(k.clone(), self.eval_expr(v).await);
         }
         map
     }
@@ -442,8 +308,8 @@ impl TradePipeline {
                     }
                 },
                 Condition::Seq { items } => {
-                    // 顺序跑完执行器序列→ true；期间 Done 信号到达→ false
-                    let done_triggered = self.exec_executor_items(items).await;
+                    // 顺序跑完执行序列→ true；期间 Done 信号到达→ false
+                    let done_triggered = self.exec_block(items, ExecMode::Normal).await;
                     !done_triggered
                 }
                 Condition::LetBound { targets, inner } => {
@@ -552,15 +418,6 @@ impl TradePipeline {
             }
         }
     }
-
-    /// 失败时将所有解构目标设为 Uninit
-    fn destructure_uninit(&self, targets: &[Option<String>]) {
-        for target in targets {
-            if let Some(name) = target {
-                self.ctx.set_var_sync(name, RuntimeValue::Uninit);
-            }
-        }
-    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -630,7 +487,7 @@ fn apply_compare_op(op: CompareOp, l: f64, r: f64) -> bool {
 /// 由 pipeline 组装、待 `Spawn` executor handler 派发的后台任务。
 ///
 /// - `pipeline` 为父 pipeline 的克隆，持有父 `TradeTaskContext`（用于创建子 ctx）。
-/// - `items`    为 `Spawn[...]` 括号内的执行器序列。
+/// - `items`    为 `Spawn[...]` 括号内的执行序列。
 ///
 /// 经由 `RuntimeValue::Task(TaskValue(Arc<dyn Any>))` 传入 Spawn handler，
 /// 后者 downcast 回本类型后调用 [`run`](Self::run) 在 tokio 上启动。
@@ -640,7 +497,7 @@ fn apply_compare_op(op: CompareOp, l: f64, r: f64) -> bool {
 ///   - 子任务内部失败调 `signal_done()` → 仅取消子 ctx，**不影响父 pipeline**
 pub struct PreparedSpawnTask {
     pub pipeline: TradePipeline,
-    pub items: Arc<Vec<ExecutorItem>>,
+    pub items: Arc<Vec<BlockItem>>,
 }
 
 impl PreparedSpawnTask {
@@ -652,6 +509,8 @@ impl PreparedSpawnTask {
             runtime: Arc::clone(&self.pipeline.runtime),
             ctx: child_ctx,
         };
-        child_pipeline.exec_spawn_items(&self.items).await;
+        child_pipeline
+            .exec_block(&self.items, ExecMode::Spawn)
+            .await;
     }
 }

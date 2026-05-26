@@ -89,7 +89,7 @@ impl StrategyRunner {
         let mut rx = monitor.start(&monitor_args, self.cancel.clone()).await;
         let mut task_id: u64 = 0;
 
-        // 热路优化：on_trigger 包含 4 个 Vec<Statement>，每次 trigger 深拷贝是不必要的。
+        // 热路优化：on_trigger 包含 4 个 Vec<BlockItem>，每次 trigger 深拷贝是不必要的。
         // 预先 Arc 包装，后续只做 Arc::clone（原子计数）。
         let on_trigger = Arc::new(strategy.monitor.on_trigger.clone());
 
