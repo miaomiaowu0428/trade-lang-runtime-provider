@@ -4,7 +4,7 @@
 //!   - Done  — no-op executor stub（pipeline 按名称识别）
 //!   - Spawn — 接收 PreparedSpawnTask 并在 tokio 上 spawn 后台任务
 
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;

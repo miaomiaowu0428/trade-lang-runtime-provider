@@ -7,8 +7,8 @@
 //!   - LocalRuntime：monitor 触发后直接创建 pipeline
 //!   - ExecutorRuntime：收到 TaskEnvelope 后创建 pipeline
 
+use ahash::AHashMap as HashMap;
 use std::any::Any;
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

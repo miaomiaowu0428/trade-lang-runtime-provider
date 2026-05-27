@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ahash = "0.8"
 trade-meta-compiler = { git = "https://github.com/miaomiaowu0428/trade-meta-compiler.git" }
 trade-lang-core = { git = "https://github.com/miaomiaowu0428/trade-lang-core.git" }
 # trade-meta-compiler = { path = "../trade-meta-compiler" }
