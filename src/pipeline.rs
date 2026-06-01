@@ -71,7 +71,7 @@ impl TradePipeline {
             if !trigger.buy_else.is_empty() {
                 info!("  [Task#{}] ─── buy else ───", task_id);
                 for stmt in &trigger.buy_else {
-                    self.exec_block_item(stmt, ExecMode::Normal).await;
+                    self.exec_block_item(stmt, ExecMode::Finally).await;
                 }
             }
             info!("  [Task#{}] Trade pipeline finished (buy failed)", task_id);
