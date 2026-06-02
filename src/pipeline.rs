@@ -155,6 +155,10 @@ impl TradePipeline {
                         self.ctx.signal_done();
                         return true;
                     }
+                    if call.name.name == "Finish" {
+                        self.ctx.root_cancel.cancel();
+                        return true;
+                    }
                     self.exec_call(call).await;
                     false
                 }
