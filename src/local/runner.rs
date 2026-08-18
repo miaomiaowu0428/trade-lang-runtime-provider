@@ -73,18 +73,12 @@ impl StrategyRunner {
         let monitor = match self.runtime.monitors.get(monitor_name) {
             Some(m) => Arc::clone(m),
             None => {
-                error!(
-                    "  [FATAL] Monitor '{}' not registered in runtime",
-                    monitor_name
-                );
+                error!("  [FATAL] Monitor '{}' not registered in runtime", monitor_name);
                 return;
             }
         };
 
-        info!(
-            "  Monitor '{}' starting, waiting for triggers...",
-            monitor_name
-        );
+        info!("  Monitor '{}' starting, waiting for triggers...", monitor_name);
 
         let mut rx = monitor.start(&monitor_args, self.cancel.clone()).await;
         let mut task_id: u64 = 0;

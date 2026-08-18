@@ -24,11 +24,7 @@ impl ExecutorHandler for BuiltinNoopExecutor {
     fn declared_return_type(&self) -> Option<TypeSpec> {
         None
     }
-    async fn execute(
-        &self,
-        _args: &HashMap<String, RuntimeValue>,
-        _ctx: &Arc<TradeTaskContext>,
-    ) -> Option<RuntimeValue> {
+    async fn execute(&self, _args: &HashMap<String, RuntimeValue>, _ctx: &Arc<TradeTaskContext>) -> Option<RuntimeValue> {
         None
     }
 }
@@ -47,11 +43,7 @@ impl ExecutorHandler for BuiltinSpawnExecutor {
     fn declared_return_type(&self) -> Option<TypeSpec> {
         None
     }
-    async fn execute(
-        &self,
-        args: &HashMap<String, RuntimeValue>,
-        _ctx: &Arc<TradeTaskContext>,
-    ) -> Option<RuntimeValue> {
+    async fn execute(&self, args: &HashMap<String, RuntimeValue>, _ctx: &Arc<TradeTaskContext>) -> Option<RuntimeValue> {
         if let Some(RuntimeValue::Task(TaskValue(any))) = args.get("task") {
             if let Some(task) = any.clone().downcast::<PreparedSpawnTask>().ok() {
                 tokio::spawn(async move { task.run().await });
@@ -65,10 +57,6 @@ impl ExecutorHandler for BuiltinSpawnExecutor {
 
 /// 注册语言内置 handler（Done、Spawn）
 pub fn register_builtins(registry: &mut RuntimeRegistry) {
-    registry
-        .executors
-        .insert("Done".to_string(), Arc::new(BuiltinNoopExecutor));
-    registry
-        .executors
-        .insert("Spawn".to_string(), Arc::new(BuiltinSpawnExecutor));
+    registry.executors.insert("Done".to_string(), Arc::new(BuiltinNoopExecutor));
+    registry.executors.insert("Spawn".to_string(), Arc::new(BuiltinSpawnExecutor));
 }

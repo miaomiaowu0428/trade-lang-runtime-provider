@@ -96,9 +96,7 @@ impl RuntimeProvider for LocalRuntime {
         info!("[Local] Parsed strategy: {:?}", ast.name);
 
         let mut checker = Checker::new(self.symbol_registry.clone());
-        checker
-            .check(&ast)
-            .map_err(|e| format!("Semantic check failed: {:?}", e))?;
+        checker.check(&ast).map_err(|e| format!("Semantic check failed: {:?}", e))?;
         info!("[Local] Semantic check passed");
 
         if let Err(errors) = self.registry.validate_against(&self.symbol_registry) {

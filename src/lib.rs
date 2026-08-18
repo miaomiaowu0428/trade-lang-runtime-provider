@@ -9,8 +9,8 @@ use tokio_util::sync::CancellationToken;
 // ── Re-export core ────────────────────────────────────────────────────────────
 pub use trade_lang_core;
 pub use trade_lang_core::{
-    CancellationToken as _CT, ConditionHandler, DataItemHandler, ExecutorHandler, MonitorHandler,
-    MonitorMessage, RuntimeRegistry, TradeTaskContext, monitor_mpsc,
+    CancellationToken as _CT, ConditionHandler, DataItemHandler, ExecutorHandler, MonitorHandler, MonitorMessage,
+    RuntimeRegistry, TradeTaskContext, monitor_mpsc,
 };
 
 // ── 核心模块 ──────────────────────────────────────────────────────────────────
@@ -29,9 +29,6 @@ pub use local::{LocalRuntime, LocalRuntimeBuilder, StrategyRunner};
 /// 统一运行入口 — 业务代码通过该 trait 启动策略
 #[async_trait]
 pub trait RuntimeProvider: Send + Sync {
-    async fn run(
-        &self,
-        strategy_source: &str,
-        cancel: CancellationToken,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    async fn run(&self, strategy_source: &str, cancel: CancellationToken)
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }

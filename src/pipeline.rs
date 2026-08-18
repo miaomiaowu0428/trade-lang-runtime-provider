@@ -95,8 +95,7 @@ impl TradePipeline {
 
         if !trigger.sell_finally.is_empty() {
             info!("  [Task#{}] ─── finally ───", task_id);
-            self.exec_block(&trigger.sell_finally, ExecMode::Finally)
-                .await;
+            self.exec_block(&trigger.sell_finally, ExecMode::Finally).await;
         }
 
         info!("  [Task#{}] Trade pipeline finished", task_id);
@@ -105,11 +104,7 @@ impl TradePipeline {
 
     // ── BlockItem execution ──────────────────────────────────────────────────
 
-    fn exec_block<'a>(
-        &'a self,
-        items: &'a [BlockItem],
-        mode: ExecMode,
-    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+    fn exec_block<'a>(&'a self, items: &'a [BlockItem], mode: ExecMode) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
         Box::pin(async move {
             for item in items {
                 if self.exec_block_item(item, mode).await {
@@ -120,19 +115,13 @@ impl TradePipeline {
         })
     }
 
-    fn exec_block_item<'a>(
-        &'a self,
-        item: &'a BlockItem,
-        mode: ExecMode,
-    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+    fn exec_block_item<'a>(&'a self, item: &'a BlockItem, mode: ExecMode) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
         Box::pin(async move {
             let skip_for_done = match mode {
                 ExecMode::Normal => self.ctx.is_done(),
                 // Spawn 中 CondExec 不能被入口 done 短路，否则早注册的监听条件永远无法启动；
                 // condition 自身会通过 ctx.done_future() 响应取消。
-                ExecMode::Spawn => {
-                    self.ctx.is_done() && !matches!(item, BlockItem::CondExec { .. })
-                }
+                ExecMode::Spawn => self.ctx.is_done() && !matches!(item, BlockItem::CondExec { .. }),
                 ExecMode::Finally => false,
             };
             if skip_for_done {
@@ -241,10 +230,7 @@ impl TradePipeline {
 
     // ── Condition 评估 ────────────────────────────────────────────────────────
 
-    fn eval_condition<'a>(
-        &'a self,
-        cond: &'a Condition,
-    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+    fn eval_condition<'a>(&'a self, cond: &'a Condition) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
         Box::pin(async move {
             match cond {
                 Condition::Default => true,
@@ -320,8 +306,7 @@ impl TradePipeline {
                     // 运行内部条件，触发时将偏值解构绑定到 targets
                     if let Condition::Call(call) = inner.as_ref() {
                         let args = self.eval_named_args(&call.args).await;
-                        if let Some(handler) = self.runtime.conditions.get(call.name.name.as_str())
-                        {
+                        if let Some(handler) = self.runtime.conditions.get(call.name.name.as_str()) {
                             let (triggered, side_value) = handler.evaluate(&args, &self.ctx).await;
                             if triggered {
                                 if let Some(rv) = side_value {
@@ -339,10 +324,7 @@ impl TradePipeline {
 
     // ── 表达式求值 ────────────────────────────────────────────────────────────
 
-    fn eval_expr<'a>(
-        &'a self,
-        expr: &'a DataExpr,
-    ) -> Pin<Box<dyn Future<Output = RuntimeValue> + Send + 'a>> {
+    fn eval_expr<'a>(&'a self, expr: &'a DataExpr) -> Pin<Box<dyn Future<Output = RuntimeValue> + Send + 'a>> {
         Box::pin(async move {
             match expr {
                 DataExpr::Literal(v) => value_to_runtime(v),
@@ -387,10 +369,7 @@ impl TradePipeline {
                         BinOp::Or => unreachable!(),
                     })
                 }
-                DataExpr::Call(call) => self
-                    .exec_call(call)
-                    .await
-                    .unwrap_or(RuntimeValue::Number(0.0)),
+                DataExpr::Call(call) => self.exec_call(call).await.unwrap_or(RuntimeValue::Number(0.0)),
                 DataExpr::List(exprs) => {
                     let mut vals = Vec::with_capacity(exprs.len());
                     for e in exprs {
@@ -440,9 +419,7 @@ pub(crate) fn eval_named_args_static(args: &[NamedArg]) -> HashMap<String, Runti
 fn value_from_data_expr(expr: &DataExpr) -> RuntimeValue {
     match expr {
         DataExpr::Literal(v) => value_to_runtime(v),
-        DataExpr::List(items) => {
-            RuntimeValue::List(items.iter().map(value_from_data_expr).collect())
-        }
+        DataExpr::List(items) => RuntimeValue::List(items.iter().map(value_from_data_expr).collect()),
         _ => RuntimeValue::Str("<dynamic>".into()),
     }
 }
@@ -513,8 +490,6 @@ impl PreparedSpawnTask {
             runtime: Arc::clone(&self.pipeline.runtime),
             ctx: child_ctx,
         };
-        child_pipeline
-            .exec_block(&self.items, ExecMode::Spawn)
-            .await;
+        child_pipeline.exec_block(&self.items, ExecMode::Spawn).await;
     }
 }
